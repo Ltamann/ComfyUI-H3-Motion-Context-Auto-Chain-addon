@@ -37,6 +37,11 @@ dependencies = [
     "safetensors",
 ]
 
+[project.urls]
+Repository = "https://github.com/Ltamann/ComfyUI-H3-Motion-Context-Auto-Chain-addon"
+Documentation = "https://github.com/Ltamann/ComfyUI-H3-Motion-Context-Auto-Chain-addon#readme"
+"Bug Tracker" = "https://github.com/Ltamann/ComfyUI-H3-Motion-Context-Auto-Chain-addon/issues"
+
 [tool.comfy]
 PublisherId = "tbg"
 DisplayName = "H3 Motion Context Auto-Chain Addon"
