@@ -9,6 +9,8 @@ It is designed for creators who want to generate a long MiniMax H3 video as a se
 ## Features
 
 - Automatically split long audio into sequential MiniMax H3 video clips.
+- Calculate clip starts and audio cuts on a user-selected frame timeline (24 fps by default).
+- Preserve the original full audio timeline for gap-free final stitching.
 - Automatically queue the next clip without manual clip-number changes.
 - Carry video and audio continuity through H3 latent context.
 - Save and load retry-safe numbered H3 latent slots.
@@ -57,6 +59,12 @@ Important inputs:
 
 - `chain_id`: unique name for the project.
 - `chunk_seconds`: duration of each generated clip; the default is 20 seconds.
+- `fps`: generated video frame rate; default 24. Clip boundaries and audio
+  sample cuts are calculated from this frame rate.
+- `trim_frames`: leading frames removed by `H3 Motion Context Trim` from
+  continuation clips. Match the Motion Context context length; the default
+  `22` is about one second at 24 FPS. The addon requests this extra audio
+  span so the trimmed clip still occupies its complete timeline slot.
 - `reset`: starts a new chain.
 - `style_prompt`: text shared by every clip.
 - `clip_prompts`: optional numbered prompts such as `[1]`, `[2]`, and `[3]`.
@@ -64,6 +72,10 @@ Important inputs:
 - `end_clip`: final clip number; `0` continues until the audio ends.
 
 Connect its `chain_config` output to the other addon nodes.
+
+The `source_audio` output is the complete original audio. Connect it to the
+optional `audio` input of `H3 Auto Chain + Stitch` for frame-aligned final
+audio instead of concatenating separately encoded clip audio.
 
 ### H3 Auto Chain Load Latent
 
@@ -108,6 +120,13 @@ Reference modes:
 Saves the current generated video, extracts its final frame, queues the next clip, and stitches all completed clips into one MP4 when the chain finishes.
 
 Connect the final generated `VIDEO` and the `chain_config` output from `H3 Auto Chain Audio`.
+Choose `audio_source`:
+
+- `original audio input`: use the complete original audio. Connect `source_audio` from
+  `H3 Auto Chain Audio` to the stitch node's optional `audio` input. This is
+  the recommended mode when the final video must match the source timeline.
+- `generated video audio`: use the audio carried by each generated video clip. No original
+  audio connection is required.
 
 ## Recommended workflow
 
@@ -147,6 +166,8 @@ Use these settings for a new project:
 ```text
 chain_id:      a unique project name
 chunk_seconds: 20
+fps:           24
+trim_frames:  22
 reset:         True
 start_clip:    1
 end_clip:      0
