@@ -1,0 +1,49 @@
+[project]
+name = "comfyui-h3-motion-context-auto-chain-addon"
+description = "Endless MiniMax H3 Video Lip-Sync Generation with Automatic MiniMax H3 Video Continuation for ComfyUI, featuring audio chunking, latent context chaining, per-clip prompts, final-frame references, automatic requeueing, and MP4 stitching. Requires the original ComfyUI H3 Motion Context custom node version from 2026/08/23.
+"
+version = "0.1.0"
+license = { file = "LICENSE" }
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "TBG______", email = "laarmann@ylab.es" },
+]
+keywords = [
+    "comfyui",
+    "minimax-h3",
+    "video-generation",
+    "video-continuation",
+    "audio-chunking",
+    "latent-chaining",
+    "video-stitching",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Multimedia :: Sound/Audio",
+]
+dependencies = [
+    "imageio-ffmpeg>=0.6.0",
+    "numpy",
+    "Pillow",
+    "safetensors",
+]
+
+[tool.comfy]
+PublisherId = "tbg"
+DisplayName = "H3 Motion Context Auto-Chain Addon"
+Icon = ""
+includes = [
+    "README.md",
+    "LICENSE",
+]
+"requires-comfyui" = ">=0.33.0"

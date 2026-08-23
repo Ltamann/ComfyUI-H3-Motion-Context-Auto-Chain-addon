@@ -1,0 +1,665 @@
+"""In-graph audio chunking and prompt requeue for H3 continuation chains."""
+
+import copy
+import logging
+import os
+import re
+import subprocess
+import threading
+import uuid
+
+import folder_paths
+import imageio_ffmpeg
+import numpy as np
+import server
+import torch
+from PIL import Image
+
+try:
+    from safetensors.torch import load_file as _st_load
+    from safetensors.torch import save_file as _st_save
+except ImportError:
+    _st_load = None
+    _st_save = None
+
+
+_LOG = logging.getLogger("h3_motion_context")
+_CHAINS = {}
+_LOCK = threading.Lock()
+
+
+def _streams_from_latent(latent):
+    samples = latent["samples"]
+    if hasattr(samples, "unbind"):
+        return list(samples.unbind())
+    return list(samples)
+
+
+def _resolve_latent_path(path, clip_index=0):
+    value = (path or "").strip().strip('"').strip("'") or "h3_context"
+    candidates = [value, os.path.join(folder_paths.get_output_directory(), value)]
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+        if not os.path.isdir(candidate):
+            continue
+        index = int(clip_index)
+        if index > 0:
+            endings = ("_%05d.safetensors" % index,
+                       "_clip%03d.safetensors" % index)
+            files = [os.path.join(candidate, name)
+                     for name in os.listdir(candidate) if name.endswith(endings)]
+            if not files:
+                raise FileNotFoundError(
+                    "h3_motion_context: no saved latent for clip %d in %s" %
+                    (index, candidate))
+        else:
+            files = [os.path.join(candidate, name)
+                     for name in os.listdir(candidate)
+                     if name.endswith(".safetensors")]
+            if not files:
+                raise FileNotFoundError(
+                    "h3_motion_context: no saved latents in %s" % candidate)
+        return max(files, key=os.path.getmtime)
+    raise FileNotFoundError(
+        "h3_motion_context: %r is neither a file nor a folder" % value)
+
+
+class MiniMaxH3AutoChainSaveLatent:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "latent": ("LATENT",),
+            "filename_prefix": ("STRING", {"default": "h3_context/clip"}),
+            "clip_index": ("INT", {"default": 0, "min": 0, "max": 9999}),
+        }, "optional": {"chain_config": ("H3_CHAIN",)}}
+
+    RETURN_TYPES = ("STRING",)
+    FUNCTION = "save"
+    OUTPUT_NODE = True
+    CATEGORY = "conditioning/minimax"
+
+    def save(self, latent, filename_prefix, clip_index=0, chain_config=None):
+        if _st_save is None:
+            raise RuntimeError("h3_motion_context: safetensors is unavailable")
+        if chain_config is not None:
+            filename_prefix = chain_config["latent_prefix"]
+            clip_index = chain_config["save_clip_index"]
+        parts = _streams_from_latent(latent)
+        if len(parts) < 2:
+            raise ValueError("h3_motion_context: latent has no audio stream")
+        video, audio = (part.cpu().contiguous() for part in parts[:2])
+        folder, filename, counter, _, _ = folder_paths.get_save_image_path(
+            filename_prefix, folder_paths.get_output_directory())
+        if int(clip_index) > 0:
+            name = "%s_%05d.safetensors" % (filename, int(clip_index))
+        else:
+            name = "%s_%05d_.safetensors" % (filename, counter)
+        path = os.path.join(folder, name)
+        _st_save({"video": video, "audio": audio}, path,
+                 metadata={"format": "h3_motion_context_av_v1"})
+        return (path,)
+
+
+class MiniMaxH3AutoChainLoadLatent:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "latent_path": ("STRING", {"default": "h3_context"}),
+            "clip_index": ("INT", {"default": 0, "min": 0, "max": 9999}),
+            "reset": ("BOOLEAN", {"default": False}),
+        }, "optional": {"chain_config": ("H3_CHAIN",)}}
+
+    RETURN_TYPES = ("LATENT",)
+    FUNCTION = "load"
+    CATEGORY = "conditioning/minimax"
+
+    @classmethod
+    def IS_CHANGED(cls, latent_path, clip_index=0, reset=False,
+                   chain_config=None):
+        if chain_config is not None:
+            clip_index = chain_config["load_clip_index"]
+            reset = chain_config["reset"]
+        if reset:
+            return float("NaN")
+        try:
+            path = _resolve_latent_path(latent_path, clip_index)
+            return "%s:%d" % (path, os.stat(path).st_mtime_ns)
+        except FileNotFoundError:
+            return float("NaN")
+
+    def load(self, latent_path, clip_index=0, reset=False, chain_config=None):
+        if chain_config is not None:
+            clip_index = chain_config["load_clip_index"]
+            reset = chain_config["reset"]
+        if reset or int(clip_index) == 0:
+            if reset:
+                return (None,)
+            try:
+                path = _resolve_latent_path(latent_path, clip_index)
+            except FileNotFoundError:
+                return (None,)
+        else:
+            path = _resolve_latent_path(latent_path, clip_index)
+        if _st_load is None:
+            raise RuntimeError("h3_motion_context: safetensors is unavailable")
+        data = _st_load(path)
+        if "video" not in data or "audio" not in data:
+            raise ValueError("h3_motion_context: invalid H3 AV latent: %s" % path)
+        return ({"samples": [data["video"], data["audio"]]},)
+
+
+def _original_motion_context_class():
+    import nodes as comfy_nodes
+
+    try:
+        return comfy_nodes.NODE_CLASS_MAPPINGS["MiniMaxH3MotionContext"]
+    except KeyError as exc:
+        raise RuntimeError(
+            "h3_motion_context: install the original H3 Motion Context "
+            "package before the Auto-Chain addon") from exc
+
+
+class MiniMaxH3AutoChainMotionContext:
+    """Run the original node, allowing clip one to have no previous context."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return _original_motion_context_class().INPUT_TYPES()
+
+    RETURN_TYPES = ("CONDITIONING", "INT")
+    RETURN_NAMES = ("conditioning", "trim_frames")
+    FUNCTION = "apply"
+    CATEGORY = "conditioning/minimax"
+
+    def apply(self, conditioning, vae, latent, context_length,
+              audio_context_length=24, context_frames=None,
+              context_latent=None, audio_vae=None, context_audio=None):
+        if context_latent is None and context_frames is None:
+            return (conditioning, 0)
+        return _original_motion_context_class()().apply(
+            conditioning, vae, latent, context_length,
+            audio_context_length, context_frames, context_latent,
+            audio_vae, context_audio)
+
+
+def _prompt_for_clip(style_prompt, clip_prompts, clip):
+    text = str(clip_prompts)
+    matches = list(re.finditer(
+        r"(?ms)^\s*\[(\d+)\]\s*(.*?)(?=^\s*\[\d+\]\s*|\Z)", text))
+    if matches:
+        prompts = {int(m.group(1)): m.group(2).strip() for m in matches}
+        prompt = prompts.get(int(clip), "")
+    else:
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        prompt = lines[min(int(clip) - 1, len(lines) - 1)] if lines else ""
+    style = str(style_prompt).strip()
+    return style + "\n" + prompt if style and prompt else style or prompt
+
+
+def _run_name(chain_id):
+    name = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(chain_id)).strip("._")
+    if not name:
+        raise ValueError("h3_motion_context: chain ID must contain a filename character")
+    return name
+
+
+def _output_path(prefix, suffix=""):
+    output_dir = os.path.abspath(folder_paths.get_output_directory())
+    relative = os.path.normpath(prefix.replace("/", os.sep))
+    path = os.path.abspath(os.path.join(output_dir, relative + suffix))
+    if os.path.commonpath((output_dir, path)) != output_dir:
+        raise ValueError("h3_motion_context: output prefix must stay inside "
+                         "the ComfyUI output directory")
+    return path
+
+
+def _stitch_videos(paths, chunk_seconds, total_seconds, final_path):
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    args = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y"]
+    for path in paths:
+        args.extend(["-i", path])
+    filters = []
+    concat_inputs = []
+    for index, path in enumerate(paths):
+        clip_number = index + 1
+        duration = min(
+            float(chunk_seconds),
+            max(0.0, float(total_seconds) -
+                (clip_number - 1) * float(chunk_seconds)))
+        filters.append(
+            "[%d:v:0]trim=duration=%.6f,setpts=PTS-STARTPTS[v%d]" %
+            (index, duration, index))
+        filters.append(
+            "[%d:a:0]atrim=duration=%.6f,asetpts=PTS-STARTPTS[a%d]" %
+            (index, duration, index))
+        concat_inputs.extend(["[v%d][a%d]" % (index, index)])
+    filters.append("%sconcat=n=%d:v=1:a=1[v][a]" %
+                   ("".join(concat_inputs), len(paths)))
+    args.extend([
+        "-filter_complex", ";".join(filters),
+        "-map", "[v]", "-map", "[a]",
+        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+        "-movflags", "+faststart", final_path,
+    ])
+    subprocess.run(args, check=True)
+
+
+def _current_prompt():
+    running = server.PromptServer.instance.prompt_queue.currently_running
+    if len(running) != 1:
+        raise RuntimeError("h3_motion_context: automatic chaining requires "
+                           "one active prompt")
+    return next(iter(running.values()))
+
+
+def _current_graph():
+    value = _current_prompt()
+    return value[2]
+
+
+def _describe_image_input(current, connection, reference_frame_path=None,
+                          reference_mode="last_frame"):
+    if not connection:
+        return "not connected"
+    source_id = str(connection[0])
+    source = current.get(source_id) or current.get(connection[0])
+    if source is None:
+        return "node %s output %s" % (source_id, connection[1])
+    class_type = source.get("class_type", "unknown node")
+    if class_type == "MiniMaxH3AutoChainFrameReference":
+        if reference_mode == "original":
+            return "original image on every clip"
+        if reference_frame_path:
+            return "previous clip final frame: %s" % reference_frame_path
+        return "initial image through H3 Auto Chain Frame Reference"
+    image_name = source.get("inputs", {}).get("image")
+    if image_name:
+        return "%s (%s)" % (image_name, class_type)
+    return "node %s output %s (%s)" % (source_id, connection[1], class_type)
+
+
+def _apply_reference_mode(current, clip):
+    mode = "last_frame"
+    for node in current.values():
+        if node.get("class_type") == "MiniMaxH3AutoChainFrameReference":
+            mode = node.get("inputs", {}).get("reference_mode", mode)
+            break
+    if mode != "off" or int(clip) <= 1:
+        return mode
+    for node in current.values():
+        if node.get("class_type") == "MiniMaxH3ReferenceToVideo":
+            node["inputs"].pop("ref_images.ref_image_0", None)
+    return mode
+
+
+def _log_clip_inputs(current, clip, start, end, sample_rate, prompt,
+                     reference_frame_path):
+    reference_mode = next(
+        (node.get("inputs", {}).get("reference_mode", "last_frame")
+         for node in current.values()
+         if node.get("class_type") == "MiniMaxH3AutoChainFrameReference"),
+        "manual/static")
+    for node_id, node in current.items():
+        if node.get("class_type") != "MiniMaxH3ReferenceToVideo":
+            continue
+        ref0 = _describe_image_input(
+            current, node.get("inputs", {}).get("ref_images.ref_image_0"),
+            reference_frame_path, reference_mode)
+        ref1 = _describe_image_input(
+            current, node.get("inputs", {}).get("ref_images.ref_image_1"))
+        _LOG.info(
+            "h3_motion_context: clip %d audio samples %d..%d (%.3f..%.3f s, "
+            "%.3f s) reference_mode=%s ref_image_0=%s ref_image_1=%s\n"
+            "FULL PROMPT:\n%s",
+            clip, start, end, start / sample_rate, end / sample_rate,
+            (end - start) / sample_rate, reference_mode, ref0, ref1, prompt)
+        return
+    _LOG.info(
+        "h3_motion_context: clip %d audio samples %d..%d (%.3f..%.3f s, "
+        "%.3f s) H3 Reference To Video node not found\nFULL PROMPT:\n%s",
+        clip, start, end, start / sample_rate, end / sample_rate,
+        (end - start) / sample_rate, prompt)
+
+
+def _requeue(load_node_id, save_node_id, previous_clip, next_clip):
+    value = _current_prompt()
+    if len(value) == 6:
+        _, _, current, extra_data, outputs_to_execute, sensitive = value
+    else:
+        _, _, current, extra_data, outputs_to_execute = value
+        sensitive = {}
+    current = copy.deepcopy(current)
+    if load_node_id in current:
+        current[load_node_id]["inputs"]["clip_index"] = previous_clip
+        current[load_node_id]["inputs"]["reset"] = False
+    if save_node_id in current:
+        current[save_node_id]["inputs"]["clip_index"] = next_clip
+    for node in current.values():
+        if node.get("class_type") == "MiniMaxH3AutoChainAudio":
+            node["inputs"]["reset"] = False
+    number = -server.PromptServer.instance.number
+    server.PromptServer.instance.number += 1
+    prompt_id = str(uuid.uuid4())
+    server.PromptServer.instance.prompt_queue.put(
+        (number, prompt_id, current, extra_data, outputs_to_execute, sensitive))
+
+
+def _chain_state(chain_id, audio, chunk_seconds, reset, style_prompt,
+                 clip_prompts, start_clip, end_clip):
+    waveform = audio["waveform"]
+    sample_rate = int(audio["sample_rate"])
+    total_samples = int(waveform.shape[-1])
+    total_seconds = total_samples / float(sample_rate)
+    with _LOCK:
+        state = _CHAINS.get(chain_id)
+        if reset or state is None:
+            first_clip = max(1, int(start_clip))
+            previous_frame = None
+            existing_videos = []
+            if first_clip > 1:
+                candidate = _output_path(
+                    "video/%s" % _run_name(chain_id),
+                    "_clip_%03d_last.png" % (first_clip - 1))
+                if os.path.isfile(candidate):
+                    previous_frame = candidate
+                for previous_clip in range(1, first_clip):
+                    previous_video = _output_path(
+                        "video/%s" % _run_name(chain_id),
+                        "_clip_%03d.mp4" % previous_clip)
+                    if not os.path.isfile(previous_video):
+                        raise RuntimeError(
+                            "h3_motion_context: cannot resume at clip %d; "
+                            "missing previous video %s" %
+                            (first_clip, previous_video))
+                    existing_videos.append(previous_video)
+            state = {
+                "clip": first_clip,
+                "end_clip": max(0, int(end_clip)),
+                "total_seconds": total_seconds,
+                "sample_rate": sample_rate,
+                "total_samples": total_samples,
+                "videos": existing_videos,
+                "style_prompt": style_prompt,
+                "clip_prompts": clip_prompts,
+                "reset": bool(reset),
+                "reference_frame_path": previous_frame,
+            }
+            _CHAINS[chain_id] = state
+        return state
+
+
+class MiniMaxH3AutoChainAudio:
+    """Feed one sequential 20-second audio chunk into REF2VA."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "audio": ("AUDIO", {
+                "tooltip": "Complete audio for the entire automatic chain. "
+                           "The node outputs one sequential chunk per run."}),
+            "chain_id": ("STRING", {
+                "default": "h3_auto_chain",
+                "tooltip": "Unique name for this chain. It identifies the "
+                           "saved latents, clips, and final video."}),
+            "chunk_seconds": ("FLOAT", {"default": 20.0, "min": 1.0,
+                                           "max": 600.0, "step": 0.1,
+                                           "tooltip": "Target duration of each "
+                                                      "clip. The final chunk "
+                                                      "may be shorter."}),
+            "reset": ("BOOLEAN", {
+                "default": True,
+                "tooltip": "Start a new chain and discard the in-memory "
+                           "position. Enable this for a new run or resume."}),
+            "style_prompt": ("STRING", {
+                "default": "", "multiline": True,
+                "tooltip": "Shared style, character, lighting, camera, and "
+                           "appearance text added to every clip prompt."}),
+            "clip_prompts": ("STRING", {
+                "default": "", "multiline": True,
+                "tooltip": "Write one tagged prompt per clip: [1] prompt "
+                           "for clip 1, [2] prompt for clip 2, and so on. "
+                           "Tags must start a line."}),
+            "start_clip": ("INT", {
+                "default": 1, "min": 1, "max": 9999,
+                "tooltip": "First clip to process. To resume after clips "
+                           "1 and 2, set this to 3."}),
+            "end_clip": ("INT", {"default": 0, "min": 0, "max": 9999,
+                                   "tooltip": "Last clip to process. 0 means "
+                                              "continue until the audio ends."}),
+        }}
+
+    RETURN_TYPES = ("AUDIO", "FLOAT", "INT", "STRING", "STRING", "H3_CHAIN")
+    RETURN_NAMES = ("audio", "chunk_seconds", "clip_index", "chain_id",
+                    "prompt", "chain_config")
+    FUNCTION = "chunk"
+    CATEGORY = "conditioning/minimax"
+    DESCRIPTION = ("Splits one AUDIO input into sequential chunks and reports "
+                   "the chunk duration for H3 Reference To Video.")
+
+    @classmethod
+    def IS_CHANGED(cls, audio, chain_id, chunk_seconds, reset=False,
+                   style_prompt="", clip_prompts="",
+                   start_clip=1, end_clip=0):
+        if reset:
+            return float("NaN")
+        with _LOCK:
+            state = _CHAINS.get(chain_id)
+            return 1 if state is None else int(state["clip"])
+
+    def chunk(self, audio, chain_id, chunk_seconds, reset=False,
+              style_prompt="", clip_prompts="",
+              start_clip=1, end_clip=0):
+        state = _chain_state(chain_id, audio, float(chunk_seconds), reset,
+                             style_prompt, clip_prompts,
+                             start_clip, end_clip)
+        _apply_reference_mode(_current_graph(), state["clip"])
+        clip = int(state["clip"])
+        prompt = _prompt_for_clip(state["style_prompt"],
+                                  state["clip_prompts"], clip)
+        start = int(round((clip - 1) * float(chunk_seconds) * state["sample_rate"]))
+        end = min(state["total_samples"],
+                  int(round(clip * float(chunk_seconds) * state["sample_rate"])))
+        if start >= end:
+            raise RuntimeError("h3_motion_context: chain has already finished; "
+                               "enable reset for a new run")
+        chunk_waveform = audio["waveform"][..., start:end].contiguous()
+        seconds = (end - start) / float(state["sample_rate"])
+        chain_config = {
+            "chain_id": chain_id,
+            "run_name": _run_name(chain_id),
+            "latent_prefix": "h3_context/%s_clip" % _run_name(chain_id),
+            "chunk_seconds": float(chunk_seconds),
+            "clip_index": clip,
+            "load_clip_index": max(0, clip - 1),
+            "save_clip_index": clip,
+            "start_clip": int(start_clip),
+            "end_clip": int(end_clip),
+            "reset": bool(state["reset"]),
+            "reference_frame_path": state.get("reference_frame_path"),
+        }
+        state["reset"] = False
+        _log_clip_inputs(_current_graph(), clip, start, end,
+                         state["sample_rate"], prompt,
+                         state.get("reference_frame_path"))
+        return ({"waveform": chunk_waveform, "sample_rate": state["sample_rate"]},
+                seconds, clip, chain_id, prompt, chain_config)
+
+
+class MiniMaxH3AutoChain:
+    """Requeue the current ComfyUI graph until all H3 audio chunks finish."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "video": ("VIDEO",),
+            "chain_config": ("H3_CHAIN", {
+                "tooltip": "Connect the chain_config output from H3 Auto Chain Audio. "
+                           "This supplies the chain ID, clip timing, and latent slots."}),
+        }}
+
+    RETURN_TYPES = ("VIDEO",)
+    FUNCTION = "advance"
+    OUTPUT_NODE = True
+    CATEGORY = "conditioning/minimax"
+    DESCRIPTION = ("Automatically requeues the next H3 chunk, advances the "
+                   "Motion Context latent slots, and stitches all clips into "
+                   "one MP4 when the audio is complete.")
+
+    def advance(self, video, chain_config):
+        chain_id = str(chain_config["chain_id"])
+        chunk_seconds = float(chain_config["chunk_seconds"])
+        output_prefix = "video/%s" % chain_config["run_name"]
+        with _LOCK:
+            state = _CHAINS.get(chain_id)
+            if state is None:
+                raise RuntimeError("h3_motion_context: connect the matching "
+                                   "Auto Chain Audio node")
+            clip = int(state["clip"])
+            next_start = int(round(clip * float(chunk_seconds) * state["sample_rate"]))
+            finished = next_start >= state["total_samples"]
+            if state.get("end_clip", 0):
+                finished = finished or clip >= int(state["end_clip"])
+            if not finished:
+                state["clip"] = clip + 1
+            clip_path = _output_path(output_prefix, "_clip_%03d.mp4" % clip)
+            state["videos"].append(clip_path)
+        clip_path = os.path.abspath(clip_path)
+        os.makedirs(os.path.dirname(clip_path), exist_ok=True)
+        raw_path = clip_path + ".raw.mp4"
+        temp_path = clip_path + ".tmp.mp4"
+        for path in (raw_path, temp_path):
+            if os.path.exists(path):
+                os.remove(path)
+        start_sample = int(round((clip - 1) * chunk_seconds * state["sample_rate"]))
+        clip_duration = min(
+            chunk_seconds,
+            max(0.0, (state["total_samples"] - start_sample) /
+                float(state["sample_rate"])))
+        try:
+            video.save_to(raw_path, format="mp4", codec="h264")
+            subprocess.run([
+                imageio_ffmpeg.get_ffmpeg_exe(), "-hide_banner", "-loglevel",
+                "error", "-y", "-i", raw_path, "-t",
+                "%.6f" % clip_duration, "-c", "copy",
+                "-avoid_negative_ts", "make_zero", temp_path,
+            ], check=True)
+            os.replace(temp_path, clip_path)
+        except BaseException:
+            for path in (raw_path, temp_path):
+                if os.path.exists(path):
+                    os.remove(path)
+            raise
+        if os.path.exists(raw_path):
+            os.remove(raw_path)
+        _LOG.info("h3_motion_context: clip %d trimmed to %.3f seconds",
+                  clip, clip_duration)
+        frame_path = _output_path(
+            output_prefix, "_clip_%03d_last.png" % clip)
+        frame_temp = frame_path + ".tmp.png"
+        if os.path.exists(frame_temp):
+            os.remove(frame_temp)
+        try:
+            subprocess.run([
+                imageio_ffmpeg.get_ffmpeg_exe(), "-hide_banner", "-loglevel",
+                "error", "-y", "-sseof", "-0.2", "-i", clip_path,
+                "-frames:v", "1", frame_temp,
+            ], check=True)
+            os.replace(frame_temp, frame_path)
+        except BaseException:
+            if os.path.exists(frame_temp):
+                os.remove(frame_temp)
+            raise
+        with _LOCK:
+            state["reference_frame_path"] = frame_path
+        _LOG.info("h3_motion_context: saved last-frame reference %s", frame_path)
+        if not finished:
+            current = _current_graph()
+            load_node_id = next((node_id for node_id, node in current.items()
+                                 if node.get("class_type") ==
+                                 "MiniMaxH3AutoChainLoadLatent"), "")
+            save_node_id = next((node_id for node_id, node in current.items()
+                                 if node.get("class_type") ==
+                                 "MiniMaxH3AutoChainSaveLatent"), "")
+            if not load_node_id or not save_node_id:
+                raise RuntimeError("h3_motion_context: automatic chain needs "
+                                   "one Load Latent and one Save Latent node")
+            _requeue(str(load_node_id), str(save_node_id), clip, clip + 1)
+            _LOG.info("h3_motion_context: queued automatic clip %d", clip + 1)
+        else:
+            final_path = _output_path(output_prefix, ".mp4")
+            _stitch_videos(state["videos"], chunk_seconds,
+                           state["total_seconds"], final_path)
+            _LOG.info("h3_motion_context: automatic chain complete at clip %d", clip)
+        return (video,)
+
+
+class MiniMaxH3AutoChainFrameReference:
+    """Use the original image for clip one and the prior clip tail after it."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "chain_config": ("H3_CHAIN", {
+                "tooltip": "Selects the saved final frame from the previous "
+                           "clip. Clip 1 uses the initial image."}),
+            "initial_image": ("IMAGE", {
+                "tooltip": "Reference image used for the first clip."}),
+            "reference_mode": (["original", "last_frame", "off"], {
+                "default": "last_frame",
+                "tooltip": "original: use the initial image on every clip; "
+                           "last_frame: use the previous clip final frame; "
+                           "off: use the image only on clip 1, then rely on "
+                           "Motion Context."}),
+        }}
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("reference_image",)
+    FUNCTION = "reference"
+    CATEGORY = "conditioning/minimax"
+    DESCRIPTION = "Keeps the H3 character reference by chaining final frames."
+
+    @classmethod
+    def IS_CHANGED(cls, chain_config, initial_image,
+                   reference_mode="last_frame"):
+        return (reference_mode, chain_config.get("reference_frame_path"))
+
+    def reference(self, chain_config, initial_image,
+                  reference_mode="last_frame"):
+        if reference_mode == "original":
+            _LOG.info("h3_motion_context: using original reference image for "
+                      "clip %s", chain_config.get("clip_index", "?"))
+            return (initial_image,)
+        if reference_mode == "off" and int(chain_config.get("clip_index", 1)) > 1:
+            return (initial_image,)
+        path = chain_config.get("reference_frame_path")
+        if not path:
+            _LOG.info("h3_motion_context: using initial reference image for clip %s",
+                      chain_config.get("clip_index", "?"))
+            return (initial_image,)
+        _LOG.info("h3_motion_context: using %s as ref_image_0 for clip %s",
+                  path, chain_config.get("clip_index", "?"))
+        with Image.open(path) as image:
+            image = image.convert("RGB")
+            pixels = np.asarray(image, dtype=np.float32) / 255.0
+        return (torch.from_numpy(pixels).unsqueeze(0),)
+
+
+NODE_CLASS_MAPPINGS = {
+    "MiniMaxH3AutoChainMotionContext": MiniMaxH3AutoChainMotionContext,
+    "MiniMaxH3AutoChainSaveLatent": MiniMaxH3AutoChainSaveLatent,
+    "MiniMaxH3AutoChainLoadLatent": MiniMaxH3AutoChainLoadLatent,
+    "MiniMaxH3AutoChainAudio": MiniMaxH3AutoChainAudio,
+    "MiniMaxH3AutoChain": MiniMaxH3AutoChain,
+    "MiniMaxH3AutoChainFrameReference": MiniMaxH3AutoChainFrameReference,
+}
+
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "MiniMaxH3AutoChainMotionContext": "H3 Auto Chain Motion Context",
+    "MiniMaxH3AutoChainSaveLatent": "H3 Auto Chain Save Latent",
+    "MiniMaxH3AutoChainLoadLatent": "H3 Auto Chain Load Latent",
+    "MiniMaxH3AutoChainAudio": "H3 Auto Chain Audio",
+    "MiniMaxH3AutoChain": "H3 Auto Chain + Stitch",
+    "MiniMaxH3AutoChainFrameReference": "H3 Auto Chain Frame Reference",
+}
