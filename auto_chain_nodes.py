@@ -101,6 +101,8 @@ class MiniMaxH3AutoChainSaveLatent:
         path = os.path.join(folder, name)
         _st_save({"video": video, "audio": audio}, path,
                  metadata={"format": "h3_motion_context_av_v1"})
+        _LOG.info("h3_motion_context: saved clip %d latent to %s",
+                  int(clip_index), path)
         return (path,)
 
 
@@ -149,7 +151,13 @@ class MiniMaxH3AutoChainLoadLatent:
         data = _st_load(path)
         if "video" not in data or "audio" not in data:
             raise ValueError("h3_motion_context: invalid H3 AV latent: %s" % path)
-        return ({"samples": [data["video"], data["audio"]]},)
+        # Detach from safetensors' file mapping so Windows can remove the
+        # completed chain files after the final stitch.
+        video = data["video"].clone()
+        audio = data["audio"].clone()
+        _LOG.info("h3_motion_context: loaded clip %d latent from %s",
+                  int(clip_index), path)
+        return ({"samples": [video, audio]},)
 
 
 def _original_motion_context_class():
@@ -215,6 +223,25 @@ def _output_path(prefix, suffix=""):
         raise ValueError("h3_motion_context: output prefix must stay inside "
                          "the ComfyUI output directory")
     return path
+
+
+def _cleanup_chain_latents(run_name):
+    folder = _output_path("h3_context")
+    prefix = "%s_clip_" % run_name
+    removed = 0
+    for name in os.listdir(folder) if os.path.isdir(folder) else ():
+        if not (name.startswith(prefix) and name.endswith(".safetensors")):
+            continue
+        path = os.path.join(folder, name)
+        if os.path.isfile(path):
+            try:
+                os.remove(path)
+                removed += 1
+            except OSError as exc:
+                _LOG.warning("h3_motion_context: could not remove latent %s: %s",
+                             path, exc)
+    _LOG.info("h3_motion_context: removed %d completed-chain latent file(s) for %s",
+              removed, run_name)
 
 
 def _write_audio_wav(audio, path):
@@ -594,6 +621,11 @@ class MiniMaxH3AutoChain:
                            "generated clips at frame-aligned boundaries. "
                            "Generated video audio keeps the audio already "
                            "embedded in each generated video clip."}),
+            "delete_completed_latents": ("BOOLEAN", {
+                "default": False,
+                "tooltip": "Delete this chain's saved H3 latent files after "
+                           "the final MP4 is stitched successfully. Disable "
+                           "to keep them available for retry or resume."}),
         }, "optional": {
             "audio": ("AUDIO", {
                 "tooltip": "The complete original audio. When connected, the "
@@ -609,7 +641,8 @@ class MiniMaxH3AutoChain:
                    "Motion Context latent slots, and stitches all clips into "
                    "one MP4 when the audio is complete.")
 
-    def advance(self, video, chain_config, audio_source="original", audio=None):
+    def advance(self, video, chain_config, audio_source="original",
+                delete_completed_latents=False, audio=None):
         use_original_audio = audio_source in ("original", "original audio input")
         use_generated_audio = audio_source in ("generated", "generated video audio")
         if use_original_audio and audio is None:
@@ -709,6 +742,8 @@ class MiniMaxH3AutoChain:
                            state["total_frames"],
                            audio if use_original_audio else None,
                            final_path, fps)
+            if delete_completed_latents:
+                _cleanup_chain_latents(chain_config["run_name"])
             _LOG.info("h3_motion_context: automatic chain complete at clip %d", clip)
         return (video,)
 

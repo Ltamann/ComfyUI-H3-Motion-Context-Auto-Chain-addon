@@ -128,6 +128,10 @@ Choose `audio_source`:
 - `generated video audio`: use the audio carried by each generated video clip. No original
   audio connection is required.
 
+Use `delete_completed_latents` to choose whether the chain's saved latent files
+are removed after a successful final stitch. It is disabled by default, so the
+files remain available for retry or resume.
+
 ## Recommended workflow
 
 ```text
@@ -231,6 +235,12 @@ output/video/<chain>.mp4
 ```
 
 The final file without `_clip_###` is the stitched MP4.
+
+When `delete_completed_latents` is enabled, a successful automatic-chain stitch
+removes that chain's temporary `.safetensors` files from
+`output/h3_context`. They remain available when the option is disabled or the
+chain fails before final stitching. During a chain, clip `N` loads clip `N-1`
+and saves clip `N`; clip 1 starts without a previous latent.
 
 ## Important limitations
 
