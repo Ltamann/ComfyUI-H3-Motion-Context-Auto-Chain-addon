@@ -1,8 +1,8 @@
 {
   "id": "e23d080c-a078-4260-b790-465925603a20",
   "revision": 0,
-  "last_node_id": 458,
-  "last_link_id": 400,
+  "last_node_id": 459,
+  "last_link_id": 415,
   "nodes": [
     {
       "id": 400,
@@ -282,48 +282,6 @@
       }
     },
     {
-      "id": 253,
-      "type": "LoadAudio",
-      "pos": [
-        1324.154167244676,
-        241.38560347431246
-      ],
-      "size": [
-        281.5677032470703,
-        136
-      ],
-      "flags": {},
-      "order": 6,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "AUDIO",
-          "type": "AUDIO",
-          "links": [
-            324,
-            337
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.31.1",
-        "Node name for S&R": "LoadAudio"
-      },
-      "widgets_values": [
-        "audi start Timeline 1.mp3",
-        null,
-        null
-      ],
-      "widgets_values_named": {
-        "audio": "audi start Timeline 1.mp3",
-        "upload": null
-      },
-      "color": "#232",
-      "bgcolor": "#353"
-    },
-    {
       "id": 372,
       "type": "RandomNoise",
       "pos": [
@@ -335,7 +293,7 @@
         108.09570762780129
       ],
       "flags": {},
-      "order": 7,
+      "order": 6,
       "mode": 0,
       "inputs": [],
       "outputs": [
@@ -353,11 +311,11 @@
         "Node name for S&R": "RandomNoise"
       },
       "widgets_values": [
-        1078204840166613,
+        541861709659616,
         "randomize"
       ],
       "widgets_values_named": {
-        "noise_seed": 1078204840166613,
+        "noise_seed": 541861709659616,
         "control_after_generate": "randomize"
       }
     },
@@ -373,7 +331,7 @@
         680
       ],
       "flags": {},
-      "order": 8,
+      "order": 7,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -406,7 +364,7 @@
         314.00000000000006
       ],
       "flags": {},
-      "order": 9,
+      "order": 8,
       "mode": 0,
       "inputs": [],
       "outputs": [
@@ -450,7 +408,7 @@
         314.00000000000006
       ],
       "flags": {},
-      "order": 10,
+      "order": 9,
       "mode": 0,
       "inputs": [],
       "outputs": [
@@ -497,7 +455,7 @@
         717.2872124599417
       ],
       "flags": {},
-      "order": 11,
+      "order": 10,
       "mode": 0,
       "inputs": [],
       "outputs": [
@@ -531,7 +489,7 @@
         512.9080422602151
       ],
       "flags": {},
-      "order": 12,
+      "order": 11,
       "mode": 0,
       "inputs": [],
       "outputs": [
@@ -563,11 +521,11 @@
       ],
       "size": [
         374,
-        335.7142857142857
+        130
       ],
       "flags": {},
       "order": 16,
-      "mode": 0,
+      "mode": 4,
       "inputs": [
         {
           "name": "video",
@@ -599,6 +557,48 @@
         "codec": "h264",
         "codec.encoding": "auto"
       }
+    },
+    {
+      "id": 253,
+      "type": "LoadAudio",
+      "pos": [
+        1324.154167244676,
+        241.38560347431246
+      ],
+      "size": [
+        281.5677032470703,
+        136
+      ],
+      "flags": {},
+      "order": 12,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "AUDIO",
+          "type": "AUDIO",
+          "links": [
+            324,
+            337
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.31.1",
+        "Node name for S&R": "LoadAudio"
+      },
+      "widgets_values": [
+        "audi start Timeline 3.mp3",
+        null,
+        null
+      ],
+      "widgets_values_named": {
+        "audio": "audi start Timeline 3.mp3",
+        "upload": null
+      },
+      "color": "#232",
+      "bgcolor": "#353"
     },
     {
       "id": 296,
@@ -788,10 +788,10 @@
         false,
         false,
         true,
-        true,
+        false,
         false,
         "minmaxH3\\minimax_h3_fl2va_pruned_int8_convrot.safetensors",
-        true
+        false
       ],
       "widgets_values_named": {
         "unet_name": "minmaxH3\\minimax_h3_ref2va_pruned_int8_convrot.safetensors",
@@ -805,10 +805,10 @@
         "switch": false,
         "switch_1": false,
         "switch_3": true,
-        "switch_4": true,
+        "switch_4": false,
         "switch_2": false,
         "unet_name_1": "minmaxH3\\minimax_h3_fl2va_pruned_int8_convrot.safetensors",
-        "boolean": true
+        "boolean": false
       }
     },
     {
@@ -953,10 +953,10 @@
       },
       "widgets_values": [
         "subject_definitions:\n<Subject 1> is the presenter shown in <Picture 1>, including her identity, face, hairstyle, body proportions, clothing, and accessories. A cinematic podcast introduction featuring the same attractive adult woman. She is funny, charismatic, naturally expressive, with a warm smile and neat, small eyebrows. She speaks directly to the camera with natural eye contact.\nHer skin look naturally soft,, and matte/dry. Maintain natural eye contact with the camera. Her expressions are lively and playful, conveying confidence, humor, and charm.\n\nsummary:\n[reference generation + audio reuse] The target video is a realistic product tutorial featuring <Subject 1> speaking directly to camera. <Picture 1> defines the presenter's identity and wardrobe.\nretention_analysis:\n<Subject 1> (appears throughout the video): fully_preserved - the presenter's identity, face, hairstyle, body proportions, clothing, accessories, and overall appearance remain consistent throughout all shots.\n\n<Picture 1>: fully_preserved - the presenter's identity and exact wardrobe are retained as the character reference.\n<Audio 1>: fully_copy - <Audio 1> is reused 1:1 as the complete final audio track.\n\ndetailed_description:\nRealistic polished social-media product tutorial, filmed as one continuous presenter performance with subtle multi-camera coverage. <Subject 1> remains the same presenter shown in <Picture 1> and wears the exact wardrobe shown in <Picture 1> throughout the video. <Subject 2> remains the same room shown in <Picture 1>.\n\n[Shot 1] A natural medium shot establishes <Subject 1>. <Subject 1> (S1) looks toward the camera and actively delivers the tutorial. Her facial expressions, mouth movement, jaw movement, and subtle head and hand gestures naturally follow the spoken performance. The camera makes a very subtle stabilized push-in.\n",
-        1,
-        0,
+        3,
+        3,
         "[1]\n[2]\n[3]",
-        "minmaxh3-34-FA2VI",
+        "minmaxh3-36just end",
         18,
         0,
         0,
@@ -965,10 +965,10 @@
       ],
       "widgets_values_named": {
         "style_prompt": "subject_definitions:\n<Subject 1> is the presenter shown in <Picture 1>, including her identity, face, hairstyle, body proportions, clothing, and accessories. A cinematic podcast introduction featuring the same attractive adult woman. She is funny, charismatic, naturally expressive, with a warm smile and neat, small eyebrows. She speaks directly to the camera with natural eye contact.\nHer skin look naturally soft,, and matte/dry. Maintain natural eye contact with the camera. Her expressions are lively and playful, conveying confidence, humor, and charm.\n\nsummary:\n[reference generation + audio reuse] The target video is a realistic product tutorial featuring <Subject 1> speaking directly to camera. <Picture 1> defines the presenter's identity and wardrobe.\nretention_analysis:\n<Subject 1> (appears throughout the video): fully_preserved - the presenter's identity, face, hairstyle, body proportions, clothing, accessories, and overall appearance remain consistent throughout all shots.\n\n<Picture 1>: fully_preserved - the presenter's identity and exact wardrobe are retained as the character reference.\n<Audio 1>: fully_copy - <Audio 1> is reused 1:1 as the complete final audio track.\n\ndetailed_description:\nRealistic polished social-media product tutorial, filmed as one continuous presenter performance with subtle multi-camera coverage. <Subject 1> remains the same presenter shown in <Picture 1> and wears the exact wardrobe shown in <Picture 1> throughout the video. <Subject 2> remains the same room shown in <Picture 1>.\n\n[Shot 1] A natural medium shot establishes <Subject 1>. <Subject 1> (S1) looks toward the camera and actively delivers the tutorial. Her facial expressions, mouth movement, jaw movement, and subtle head and hand gestures naturally follow the spoken performance. The camera makes a very subtle stabilized push-in.\n",
-        "value": 1,
-        "end_clip": 0,
+        "value": 3,
+        "end_clip": 3,
         "prompt": "[1]\n[2]\n[3]",
-        "chain_id": "minmaxh3-34-FA2VI",
+        "chain_id": "minmaxh3-36just end",
         "chunk_seconds": 18,
         "width": 0,
         "height": 0,
@@ -1107,8 +1107,8 @@
         "version": 1,
         "state": {
           "lastGroupId": 20,
-          "lastNodeId": 458,
-          "lastLinkId": 400,
+          "lastNodeId": 459,
+          "lastLinkId": 415,
           "lastRerouteId": 0
         },
         "revision": 0,
@@ -2950,8 +2950,8 @@
         "version": 1,
         "state": {
           "lastGroupId": 20,
-          "lastNodeId": 458,
-          "lastLinkId": 400,
+          "lastNodeId": 459,
+          "lastLinkId": 415,
           "lastRerouteId": 0
         },
         "revision": 0,
@@ -2981,7 +2981,7 @@
             "name": "audio",
             "type": "AUDIO",
             "linkIds": [
-              67
+              401
             ],
             "localized_name": "audio",
             "pos": [
@@ -3071,7 +3071,7 @@
             "name": "style_prompt",
             "type": "STRING",
             "linkIds": [
-              155
+              404
             ],
             "pos": [
               -1534.761618602164,
@@ -3083,7 +3083,7 @@
             "name": "value",
             "type": "INT",
             "linkIds": [
-              162
+              406
             ],
             "label": "Start Clip",
             "pos": [
@@ -3096,7 +3096,7 @@
             "name": "end_clip",
             "type": "INT",
             "linkIds": [
-              157
+              407
             ],
             "pos": [
               -1534.761618602164,
@@ -3108,7 +3108,7 @@
             "name": "prompt",
             "type": "STRING",
             "linkIds": [
-              160
+              405
             ],
             "label": "[1]...[2]...Clip Promt",
             "pos": [
@@ -3121,7 +3121,7 @@
             "name": "chain_id",
             "type": "STRING",
             "linkIds": [
-              167
+              402
             ],
             "label": "chain_id = name of files",
             "pos": [
@@ -3134,7 +3134,7 @@
             "name": "chunk_seconds",
             "type": "FLOAT",
             "linkIds": [
-              168
+              403
             ],
             "pos": [
               -1534.761618602164,
@@ -3248,7 +3248,7 @@
             "name": "chain_config",
             "type": "H3_CHAIN",
             "linkIds": [
-              165
+              414
             ],
             "pos": [
               4938.926632375893,
@@ -3856,7 +3856,7 @@
                 "localized_name": "audio",
                 "name": "audio",
                 "type": "AUDIO",
-                "link": 116
+                "link": 409
               },
               {
                 "label": "Audio VAE",
@@ -4182,7 +4182,7 @@
                 "name": "chain_config",
                 "shape": 7,
                 "type": "H3_CHAIN",
-                "link": 164
+                "link": 413
               }
             ],
             "outputs": [
@@ -4226,7 +4226,7 @@
                 "localized_name": "chain_config",
                 "name": "chain_config",
                 "type": "H3_CHAIN",
-                "link": 240
+                "link": 415
               },
               {
                 "localized_name": "initial_image",
@@ -4547,7 +4547,7 @@
                 "name": "chain_config",
                 "shape": 7,
                 "type": "H3_CHAIN",
-                "link": 163
+                "link": 412
               }
             ],
             "outputs": [
@@ -4588,7 +4588,7 @@
               78
             ],
             "flags": {},
-            "order": 27,
+            "order": 26,
             "mode": 0,
             "inputs": [
               {
@@ -4650,7 +4650,7 @@
               78
             ],
             "flags": {},
-            "order": 26,
+            "order": 25,
             "mode": 0,
             "inputs": [
               {
@@ -4755,7 +4755,7 @@
               26
             ],
             "flags": {},
-            "order": 28,
+            "order": 27,
             "mode": 0,
             "inputs": [
               {
@@ -4845,7 +4845,7 @@
               46
             ],
             "flags": {},
-            "order": 29,
+            "order": 28,
             "mode": 0,
             "inputs": [
               {
@@ -5067,7 +5067,7 @@
                 "name": "ref_audios.ref_audio_0",
                 "shape": 7,
                 "type": "AUDIO",
-                "link": 49
+                "link": 408
               },
               {
                 "label": "ref_audio_1",
@@ -5084,7 +5084,7 @@
                 "widget": {
                   "name": "prompt"
                 },
-                "link": 161
+                "link": 411
               },
               {
                 "localized_name": "width",
@@ -5164,7 +5164,7 @@
               220
             ],
             "flags": {},
-            "order": 25,
+            "order": 24,
             "mode": 0,
             "inputs": [
               {
@@ -5279,7 +5279,7 @@
                 "localized_name": "values.a",
                 "name": "values.a",
                 "type": "FLOAT,INT,BOOLEAN",
-                "link": 54
+                "link": 410
               },
               {
                 "label": "b",
@@ -5326,166 +5326,6 @@
             }
           },
           {
-            "id": 425,
-            "type": "MiniMaxH3AutoChainAudio",
-            "pos": [
-              131.2508913329087,
-              -304.4592947393098
-            ],
-            "size": [
-              416.5808860727942,
-              632.1987760981874
-            ],
-            "flags": {},
-            "order": 24,
-            "mode": 0,
-            "inputs": [
-              {
-                "localized_name": "audio",
-                "name": "audio",
-                "type": "AUDIO",
-                "link": 67
-              },
-              {
-                "localized_name": "chain_id",
-                "name": "chain_id",
-                "type": "STRING",
-                "widget": {
-                  "name": "chain_id"
-                },
-                "link": 167
-              },
-              {
-                "localized_name": "chunk_seconds",
-                "name": "chunk_seconds",
-                "type": "FLOAT",
-                "widget": {
-                  "name": "chunk_seconds"
-                },
-                "link": 168
-              },
-              {
-                "localized_name": "style_prompt",
-                "name": "style_prompt",
-                "type": "STRING",
-                "widget": {
-                  "name": "style_prompt"
-                },
-                "link": 155
-              },
-              {
-                "localized_name": "clip_prompts",
-                "name": "clip_prompts",
-                "type": "STRING",
-                "widget": {
-                  "name": "clip_prompts"
-                },
-                "link": 160
-              },
-              {
-                "localized_name": "start_clip",
-                "name": "start_clip",
-                "type": "INT",
-                "widget": {
-                  "name": "start_clip"
-                },
-                "link": 162
-              },
-              {
-                "localized_name": "end_clip",
-                "name": "end_clip",
-                "type": "INT",
-                "widget": {
-                  "name": "end_clip"
-                },
-                "link": 157
-              }
-            ],
-            "outputs": [
-              {
-                "localized_name": "audio",
-                "name": "audio",
-                "type": "AUDIO",
-                "links": [
-                  49,
-                  116
-                ]
-              },
-              {
-                "localized_name": "chunk_seconds",
-                "name": "chunk_seconds",
-                "type": "FLOAT",
-                "links": [
-                  54
-                ]
-              },
-              {
-                "localized_name": "clip_index",
-                "name": "clip_index",
-                "type": "INT",
-                "links": null
-              },
-              {
-                "localized_name": "chain_id",
-                "name": "chain_id",
-                "type": "STRING",
-                "links": null
-              },
-              {
-                "localized_name": "prompt",
-                "name": "prompt",
-                "type": "STRING",
-                "links": [
-                  161
-                ]
-              },
-              {
-                "localized_name": "chain_config",
-                "name": "chain_config",
-                "type": "H3_CHAIN",
-                "links": [
-                  163,
-                  164,
-                  165,
-                  240
-                ]
-              },
-              {
-                "localized_name": "source_audio",
-                "name": "source_audio",
-                "type": "AUDIO",
-                "links": null
-              }
-            ],
-            "properties": {
-              "Node name for S&R": "MiniMaxH3AutoChainAudio"
-            },
-            "widgets_values": [
-              "h3_auto_chain",
-              20,
-              24,
-              22,
-              true,
-              "191",
-              "Her skin look naturally soft,, and matte/dry. Maintain natural eye contact with the camera. Her expressions are lively and playful, conveying confidence, humor, and charm.",
-              "",
-              0
-            ],
-            "widgets_values_named": {
-              "chain_id": "h3_auto_chain",
-              "chunk_seconds": 20,
-              "fps": 24,
-              "trim_frames": 22,
-              "reset": true,
-              "style_prompt": "191",
-              "clip_prompts": "Her skin look naturally soft,, and matte/dry. Maintain natural eye contact with the camera. Her expressions are lively and playful, conveying confidence, humor, and charm.",
-              "start_clip": "",
-              "end_clip": 0
-            },
-            "color": "#232",
-            "bgcolor": "#353"
-          },
-          {
             "id": 458,
             "type": "MiniMaxH3AutoChainAudio",
             "pos": [
@@ -5497,7 +5337,7 @@
               632.1987760981874
             ],
             "flags": {},
-            "order": 23,
+            "order": 2,
             "mode": 0,
             "inputs": [
               {
@@ -5563,6 +5403,8 @@
               "General Promt",
               "[1]---[2]---",
               "",
+              0,
+              1,
               0
             ],
             "widgets_values_named": {
@@ -5570,14 +5412,178 @@
               "chunk_seconds": 20,
               "fps": 24,
               "trim_frames": 22,
-              "reset": true,
-              "style_prompt": "General Promt",
-              "clip_prompts": "[1]---[2]---",
-              "start_clip": "",
+              "final_tail_mode": true,
+              "final_tail_frames": "General Promt",
+              "reset": "[1]---[2]---",
+              "style_prompt": "",
+              "clip_prompts": 0,
+              "start_clip": 1,
               "end_clip": 0
             },
             "color": "#232",
             "bgcolor": "#353"
+          },
+          {
+            "id": 459,
+            "type": "MiniMaxH3AutoChainAudio",
+            "pos": [
+              141.6703903430253,
+              -231.56938619666192
+            ],
+            "size": [
+              400,
+              478
+            ],
+            "flags": {},
+            "order": 29,
+            "mode": 0,
+            "inputs": [
+              {
+                "localized_name": "audio",
+                "name": "audio",
+                "type": "AUDIO",
+                "link": 401
+              },
+              {
+                "localized_name": "chain_id",
+                "name": "chain_id",
+                "type": "STRING",
+                "widget": {
+                  "name": "chain_id"
+                },
+                "link": 402
+              },
+              {
+                "localized_name": "chunk_seconds",
+                "name": "chunk_seconds",
+                "type": "FLOAT",
+                "widget": {
+                  "name": "chunk_seconds"
+                },
+                "link": 403
+              },
+              {
+                "localized_name": "style_prompt",
+                "name": "style_prompt",
+                "type": "STRING",
+                "widget": {
+                  "name": "style_prompt"
+                },
+                "link": 404
+              },
+              {
+                "localized_name": "clip_prompts",
+                "name": "clip_prompts",
+                "type": "STRING",
+                "widget": {
+                  "name": "clip_prompts"
+                },
+                "link": 405
+              },
+              {
+                "localized_name": "start_clip",
+                "name": "start_clip",
+                "type": "INT",
+                "widget": {
+                  "name": "start_clip"
+                },
+                "link": 406
+              },
+              {
+                "localized_name": "end_clip",
+                "name": "end_clip",
+                "type": "INT",
+                "widget": {
+                  "name": "end_clip"
+                },
+                "link": 407
+              }
+            ],
+            "outputs": [
+              {
+                "localized_name": "audio",
+                "name": "audio",
+                "type": "AUDIO",
+                "links": [
+                  408,
+                  409
+                ]
+              },
+              {
+                "localized_name": "chunk_seconds",
+                "name": "chunk_seconds",
+                "type": "FLOAT",
+                "links": [
+                  410
+                ]
+              },
+              {
+                "localized_name": "clip_index",
+                "name": "clip_index",
+                "type": "INT",
+                "links": null
+              },
+              {
+                "localized_name": "chain_id",
+                "name": "chain_id",
+                "type": "STRING",
+                "links": null
+              },
+              {
+                "localized_name": "prompt",
+                "name": "prompt",
+                "type": "STRING",
+                "links": [
+                  411
+                ]
+              },
+              {
+                "localized_name": "chain_config",
+                "name": "chain_config",
+                "type": "H3_CHAIN",
+                "links": [
+                  412,
+                  413,
+                  414,
+                  415
+                ]
+              },
+              {
+                "localized_name": "source_audio",
+                "name": "source_audio",
+                "type": "AUDIO",
+                "links": null
+              }
+            ],
+            "properties": {
+              "Node name for S&R": "MiniMaxH3AutoChainAudio"
+            },
+            "widgets_values": [
+              "h3_auto_chain",
+              20,
+              24,
+              22,
+              "audio plus tail",
+              24,
+              true,
+              "",
+              "",
+              1,
+              0
+            ],
+            "widgets_values_named": {
+              "chain_id": "h3_auto_chain",
+              "chunk_seconds": 20,
+              "fps": 24,
+              "trim_frames": 22,
+              "final_tail_mode": "audio plus tail",
+              "final_tail_frames": 24,
+              "reset": true,
+              "style_prompt": "",
+              "clip_prompts": "",
+              "start_clip": 1,
+              "end_clip": 0
+            }
           }
         ],
         "groups": [
@@ -5644,22 +5650,6 @@
         ],
         "links": [
           {
-            "id": 116,
-            "origin_id": 425,
-            "origin_slot": 0,
-            "target_id": 413,
-            "target_slot": 0,
-            "type": "AUDIO"
-          },
-          {
-            "id": 54,
-            "origin_id": 425,
-            "origin_slot": 1,
-            "target_id": 420,
-            "target_slot": 0,
-            "type": "FLOAT"
-          },
-          {
             "id": 113,
             "origin_id": 413,
             "origin_slot": 0,
@@ -5674,14 +5664,6 @@
             "target_id": 415,
             "target_slot": 1,
             "type": "MASK"
-          },
-          {
-            "id": 49,
-            "origin_id": 425,
-            "origin_slot": 0,
-            "target_id": 422,
-            "target_slot": 8,
-            "type": "AUDIO"
           },
           {
             "id": 59,
@@ -5788,14 +5770,6 @@
             "type": "AUDIO"
           },
           {
-            "id": 67,
-            "origin_id": -10,
-            "origin_slot": 0,
-            "target_id": 425,
-            "target_slot": 0,
-            "type": "AUDIO"
-          },
-          {
             "id": 137,
             "origin_id": -10,
             "origin_slot": 1,
@@ -5868,86 +5842,6 @@
             "type": "VIDEO"
           },
           {
-            "id": 155,
-            "origin_id": -10,
-            "origin_slot": 6,
-            "target_id": 425,
-            "target_slot": 3,
-            "type": "STRING"
-          },
-          {
-            "id": 157,
-            "origin_id": -10,
-            "origin_slot": 8,
-            "target_id": 425,
-            "target_slot": 6,
-            "type": "INT"
-          },
-          {
-            "id": 160,
-            "origin_id": -10,
-            "origin_slot": 9,
-            "target_id": 425,
-            "target_slot": 4,
-            "type": "STRING"
-          },
-          {
-            "id": 161,
-            "origin_id": 425,
-            "origin_slot": 4,
-            "target_id": 422,
-            "target_slot": 10,
-            "type": "STRING"
-          },
-          {
-            "id": 162,
-            "origin_id": -10,
-            "origin_slot": 7,
-            "target_id": 425,
-            "target_slot": 5,
-            "type": "INT"
-          },
-          {
-            "id": 163,
-            "origin_id": 425,
-            "origin_slot": 5,
-            "target_id": 424,
-            "target_slot": 0,
-            "type": "H3_CHAIN"
-          },
-          {
-            "id": 164,
-            "origin_id": 425,
-            "origin_slot": 5,
-            "target_id": 417,
-            "target_slot": 1,
-            "type": "H3_CHAIN"
-          },
-          {
-            "id": 165,
-            "origin_id": 425,
-            "origin_slot": 5,
-            "target_id": -20,
-            "target_slot": 1,
-            "type": "H3_CHAIN"
-          },
-          {
-            "id": 167,
-            "origin_id": -10,
-            "origin_slot": 10,
-            "target_id": 425,
-            "target_slot": 1,
-            "type": "STRING"
-          },
-          {
-            "id": 168,
-            "origin_id": -10,
-            "origin_slot": 11,
-            "target_id": 425,
-            "target_slot": 2,
-            "type": "FLOAT"
-          },
-          {
             "id": 233,
             "origin_id": 405,
             "origin_slot": 0,
@@ -5978,14 +5872,6 @@
             "target_id": 412,
             "target_slot": 0,
             "type": "IMAGE"
-          },
-          {
-            "id": 240,
-            "origin_id": 425,
-            "origin_slot": 5,
-            "target_id": 421,
-            "target_slot": 0,
-            "type": "H3_CHAIN"
           },
           {
             "id": 242,
@@ -6306,6 +6192,126 @@
             "target_id": 434,
             "target_slot": 6,
             "type": "INT"
+          },
+          {
+            "id": 401,
+            "origin_id": -10,
+            "origin_slot": 0,
+            "target_id": 459,
+            "target_slot": 0,
+            "type": "AUDIO"
+          },
+          {
+            "id": 402,
+            "origin_id": -10,
+            "origin_slot": 10,
+            "target_id": 459,
+            "target_slot": 1,
+            "type": "STRING"
+          },
+          {
+            "id": 403,
+            "origin_id": -10,
+            "origin_slot": 11,
+            "target_id": 459,
+            "target_slot": 2,
+            "type": "FLOAT"
+          },
+          {
+            "id": 404,
+            "origin_id": -10,
+            "origin_slot": 6,
+            "target_id": 459,
+            "target_slot": 3,
+            "type": "STRING"
+          },
+          {
+            "id": 405,
+            "origin_id": -10,
+            "origin_slot": 9,
+            "target_id": 459,
+            "target_slot": 4,
+            "type": "STRING"
+          },
+          {
+            "id": 406,
+            "origin_id": -10,
+            "origin_slot": 7,
+            "target_id": 459,
+            "target_slot": 5,
+            "type": "INT"
+          },
+          {
+            "id": 407,
+            "origin_id": -10,
+            "origin_slot": 8,
+            "target_id": 459,
+            "target_slot": 6,
+            "type": "INT"
+          },
+          {
+            "id": 408,
+            "origin_id": 459,
+            "origin_slot": 0,
+            "target_id": 422,
+            "target_slot": 8,
+            "type": "AUDIO"
+          },
+          {
+            "id": 409,
+            "origin_id": 459,
+            "origin_slot": 0,
+            "target_id": 413,
+            "target_slot": 0,
+            "type": "AUDIO"
+          },
+          {
+            "id": 410,
+            "origin_id": 459,
+            "origin_slot": 1,
+            "target_id": 420,
+            "target_slot": 0,
+            "type": "FLOAT"
+          },
+          {
+            "id": 411,
+            "origin_id": 459,
+            "origin_slot": 4,
+            "target_id": 422,
+            "target_slot": 10,
+            "type": "STRING"
+          },
+          {
+            "id": 412,
+            "origin_id": 459,
+            "origin_slot": 5,
+            "target_id": 424,
+            "target_slot": 0,
+            "type": "H3_CHAIN"
+          },
+          {
+            "id": 413,
+            "origin_id": 459,
+            "origin_slot": 5,
+            "target_id": 417,
+            "target_slot": 1,
+            "type": "H3_CHAIN"
+          },
+          {
+            "id": 414,
+            "origin_id": 459,
+            "origin_slot": 5,
+            "target_id": -20,
+            "target_slot": 1,
+            "type": "H3_CHAIN"
+          },
+          {
+            "id": 415,
+            "origin_id": 459,
+            "origin_slot": 5,
+            "target_id": 421,
+            "target_slot": 0,
+            "type": "H3_CHAIN"
           }
         ],
         "extra": {}
@@ -6320,10 +6326,10 @@
     "VHS_MetadataImage": true,
     "VHS_KeepIntermediate": true,
     "ds": {
-      "scale": 1.4910447589770361,
+      "scale": 0.9258214844844416,
       "offset": [
-        -1198.263867686708,
-        329.1216617429303
+        -873.1050324084713,
+        109.7617403822951
       ]
     }
   },

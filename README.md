@@ -58,13 +58,20 @@ Splits the complete audio input into sequential clip-sized chunks and outputs th
 Important inputs:
 
 - `chain_id`: unique name for the project.
-- `chunk_seconds`: duration of each generated clip; the default is 20 seconds.
+- `chunk_seconds`: normal model duration for each generated clip; the default
+  is 20 seconds. A shorter final source segment is padded with silence for
+  model sampling rather than shortening the model request.
 - `fps`: generated video frame rate; default 24. Clip boundaries and audio
   sample cuts are calculated from this frame rate.
 - `trim_frames`: leading frames removed by `H3 Motion Context Trim` from
   continuation clips. Match the Motion Context context length; the default
   `22` is about one second at 24 FPS. The addon requests this extra audio
   span so the trimmed clip still occupies its complete timeline slot.
+- `final_tail_mode`: choose `exact audio duration` or `audio plus tail` for
+  the final partial clip.
+- `final_tail_frames`: silent frames retained after the source audio when
+  `audio plus tail` is selected. The model input is padded with digital
+  silence; no source audio is repeated.
 - `reset`: starts a new chain.
 - `style_prompt`: text shared by every clip.
 - `clip_prompts`: optional numbered prompts such as `[1]`, `[2]`, and `[3]`.
@@ -205,10 +212,15 @@ To continue after clips 1 and 2:
 1. Keep the same `chain_id`.
 2. Set `start_clip` to `3`.
 3. Set `reset` to `True` to initialize the resumed chain state.
-4. Confirm that the previous latent and video files still exist.
+4. Confirm that the previous latent files exist when Motion Context continuation is needed.
 5. Queue the workflow.
 
-Previous clip files are required for final video stitching.
+Missing previous videos no longer prevent a partial render. The requested clip
+is generated and, when stitching finishes, only the existing clip MP4 files are
+included in timeline order. This supports rendering clip 3 alone, or rendering
+clips 2-4 while preserving already-rendered clips 1, 5, and 6 when they exist.
+Missing previous latents still cause Motion Context to be bypassed for that
+clip; the addon never reuses a latent from another chain.
 
 ## Retry a clip safely
 
@@ -275,9 +287,12 @@ Check that:
 
 Check that `H3 Auto Chain Audio` is the only chain-audio node in the graph and that the same `chain_id` is used throughout the workflow.
 
-### The final video is missing clips
+### The final video contains only some clips
 
-Make sure the final generated video is connected to `H3 Auto Chain + Stitch` and that previous clip MP4 files have not been moved or deleted.
+This is expected when the chain is sparse. `H3 Auto Chain + Stitch` includes
+every matching clip MP4 that exists and skips missing clip numbers. To create a
+complete timeline, render the missing clips with the same `chain_id` and stitch
+again.
 
 ### The character changes between clips
 
