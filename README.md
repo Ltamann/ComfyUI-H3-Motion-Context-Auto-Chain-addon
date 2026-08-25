@@ -2,7 +2,7 @@
 
 Automatic long-form video continuation for [ComfyUI](https://github.com/comfyanonymous/ComfyUI) and MiniMax H3 video workflows.
 
-This addon extends the original **ComfyUI H3 Motion Context** custom node with automatic audio chunking, latent-based clip continuation, per-clip prompts, final-frame references, automatic prompt requeueing, and MP4 video stitching.
+This addon provides a standalone H3 Motion Context implementation plus automatic audio chunking, latent-based clip continuation, per-clip prompts, final-frame references, automatic prompt requeueing, and MP4 video stitching.
 
 It is designed for creators who want to generate a long MiniMax H3 video as a sequence of connected clips while preserving motion, audio, characters, and scene continuity.
 
@@ -19,37 +19,41 @@ It is designed for creators who want to generate a long MiniMax H3 video as a se
 - Select original-image, last-frame, or disabled reference behavior.
 - Trim generated clips to their intended duration.
 - Save individual MP4 clips and stitch them into one final MP4.
-- Keep the original H3 Motion Context package unchanged.
+- Does not require or register the original H3 Motion Context package.
 
 ## Requirements
 
 This addon requires:
 
 1. ComfyUI.
-2. The original `ComfyUI-H3-Motion-Context` custom node package.
-3. A working MiniMax H3 video workflow.
-4. The Python packages used by the H3 workflow, including `safetensors`, `numpy`, `Pillow`, and `imageio-ffmpeg`.
+2. A working MiniMax H3 video workflow.
+3. The Python packages used by the H3 workflow, including `safetensors`, `numpy`, `Pillow`, and `imageio-ffmpeg`.
 
 ## Installation
 
-Install both folders inside `ComfyUI/custom_nodes/`:
+Install this folder inside `ComfyUI/custom_nodes/`:
 
 ```text
-ComfyUI/custom_nodes/ComfyUI-H3-Motion-Context-orig/
 ComfyUI/custom_nodes/ComfyUI-H3-Motion-Context-Auto-Chain-addon/
 ```
 
 Restart ComfyUI after installing the addon.
 
-Do not install the experimental modified H3 package alongside the original package and this addon. The modified fork registers duplicate original node IDs and can override the stock H3 nodes.
+The original H3 Motion Context package is optional. If it is installed for
+other workflows, this addon does not register its node IDs; both packages can
+coexist. Do not install multiple different H3 patch packs that modify the same
+ComfyUI H3 internals.
 
 ## Nodes included
 
 ### H3 Auto Chain Motion Context
 
-Use this node in automatic-chain workflows instead of the original H3 Motion Context node. It delegates to the original node whenever previous context is available. On clip 1, when no previous latent or context frames exist, it passes the conditioning through and reports `trim_frames` as `0`.
+Use this node in automatic-chain workflows. It uses the addon’s private Motion
+Context implementation whenever previous context is available. On clip 1,
+when no previous latent or context frames exist, it passes the conditioning
+through and reports `trim_frames` as `0`.
 
-This first-clip pass-through is required because an automatic chain has no previous clip to pin yet. The original H3 Motion Context node remains unchanged and should still be used for normal manual continuation workflows.
+This first-clip pass-through is required because an automatic chain has no previous clip to pin yet.
 
 ### H3 Auto Chain Audio
 
@@ -168,7 +172,11 @@ Decoded and trimmed VIDEO
 H3 Auto Chain + Stitch
 ```
 
-Use `H3 Auto Chain Motion Context` for automatic-chain workflows. It uses the original H3 Motion Context implementation for continuation clips and bypasses context pinning only for clip 1. Connect its `trim_frames` output to the original H3 Motion Context Trim node before passing the final video to the stitch node.
+Use `H3 Auto Chain Motion Context` for automatic-chain workflows. It uses the
+addon’s standalone Motion Context implementation for continuation clips and
+bypasses context pinning only for clip 1. Connect its `trim_frames` output to
+`H3 Auto Chain Motion Context Trim` before passing the final video to the stitch
+node.
 
 ## Starting a new video chain
 
@@ -266,11 +274,15 @@ The chain ID controls the internal state, latent filenames, video filenames, and
 
 ### Do not decode the saved context latent
 
-The saved latent contains H3's paired video/audio representation. It is intended only for the original H3 Motion Context node's `context_latent` input.
+The saved latent contains H3's paired video/audio representation. It is
+intended only for this addon’s Auto Chain Motion Context `context_latent` input.
 
-### Keep only one base H3 package
+### Avoid competing H3 patch packs
 
-Install the original H3 Motion Context package once, together with this addon. Do not run multiple forks that register the same original H3 node IDs.
+The original H3 Motion Context package is optional and can coexist with this
+addon. Do not run multiple different H3 patch packs that modify the same
+ComfyUI H3 internals; the first compatible patch remains active and an
+incompatible patch is rejected clearly.
 
 ## Troubleshooting
 

@@ -17,6 +17,11 @@ import server
 import torch
 from PIL import Image
 
+from .motion_context_core import (
+    AutoChainMotionContextCore,
+    MiniMaxH3MotionContextTrim,
+)
+
 try:
     from safetensors.torch import load_file as _st_load
     from safetensors.torch import save_file as _st_save
@@ -179,23 +184,12 @@ class MiniMaxH3AutoChainLoadLatent:
         return ({"samples": [video, audio]},)
 
 
-def _original_motion_context_class():
-    import nodes as comfy_nodes
-
-    try:
-        return comfy_nodes.NODE_CLASS_MAPPINGS["MiniMaxH3MotionContext"]
-    except KeyError as exc:
-        raise RuntimeError(
-            "h3_motion_context: install the original H3 Motion Context "
-            "package before the Auto-Chain addon") from exc
-
-
 class MiniMaxH3AutoChainMotionContext:
-    """Run the original node, allowing clip one to have no previous context."""
+    """Run the standalone Motion Context core, allowing clip one to have no context."""
 
     @classmethod
     def INPUT_TYPES(cls):
-        return _original_motion_context_class().INPUT_TYPES()
+        return AutoChainMotionContextCore.INPUT_TYPES()
 
     RETURN_TYPES = ("CONDITIONING", "INT")
     RETURN_NAMES = ("conditioning", "trim_frames")
@@ -207,10 +201,14 @@ class MiniMaxH3AutoChainMotionContext:
               context_latent=None, audio_vae=None, context_audio=None):
         if context_latent is None and context_frames is None:
             return (conditioning, 0)
-        return _original_motion_context_class()().apply(
+        return AutoChainMotionContextCore().apply(
             conditioning, vae, latent, context_length,
             audio_context_length, context_frames, context_latent,
             audio_vae, context_audio)
+
+
+class MiniMaxH3AutoChainMotionContextTrim(MiniMaxH3MotionContextTrim):
+    """Standalone trim node paired with Auto Chain Motion Context."""
 
 
 def _prompt_for_clip(style_prompt, clip_prompts, clip):
@@ -923,6 +921,7 @@ class MiniMaxH3AutoChainFrameReference:
 
 NODE_CLASS_MAPPINGS = {
     "MiniMaxH3AutoChainMotionContext": MiniMaxH3AutoChainMotionContext,
+    "MiniMaxH3AutoChainMotionContextTrim": MiniMaxH3AutoChainMotionContextTrim,
     "MiniMaxH3AutoChainSaveLatent": MiniMaxH3AutoChainSaveLatent,
     "MiniMaxH3AutoChainLoadLatent": MiniMaxH3AutoChainLoadLatent,
     "MiniMaxH3AutoChainAudio": MiniMaxH3AutoChainAudio,
@@ -932,6 +931,7 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MiniMaxH3AutoChainMotionContext": "H3 Auto Chain Motion Context",
+    "MiniMaxH3AutoChainMotionContextTrim": "H3 Auto Chain Motion Context Trim",
     "MiniMaxH3AutoChainSaveLatent": "H3 Auto Chain Save Latent",
     "MiniMaxH3AutoChainLoadLatent": "H3 Auto Chain Load Latent",
     "MiniMaxH3AutoChainAudio": "H3 Auto Chain Audio",
