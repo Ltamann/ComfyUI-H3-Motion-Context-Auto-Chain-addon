@@ -2,6 +2,12 @@
 
 Automatic long-form video continuation for [ComfyUI](https://github.com/comfyanonymous/ComfyUI) and MiniMax H3 video workflows.
 
+## Compatibility
+
+This project is for ComfyUI **0.34.0 and newer only**. It is not compatible
+with older ComfyUI versions. ComfyUI 0.34.0 provides the native H3 anchor and
+keyframe/reference behavior required by this addon.
+
 This addon provides a standalone H3 Motion Context implementation plus automatic audio chunking, latent-based clip continuation, per-clip prompts, final-frame references, automatic prompt requeueing, and MP4 video stitching.
 
 It is designed for creators who want to generate a long MiniMax H3 video as a sequence of connected clips while preserving motion, audio, characters, and scene continuity.
@@ -41,8 +47,8 @@ Restart ComfyUI after installing the addon.
 
 The original H3 Motion Context package is optional. If it is installed for
 other workflows, this addon does not register its node IDs; both packages can
-coexist. Do not install multiple different H3 patch packs that modify the same
-ComfyUI H3 internals.
+coexist. This addon uses ComfyUI's native H3 keyframe and reference handling
+and does not patch ComfyUI internals.
 
 ## Nodes included
 
@@ -277,12 +283,11 @@ The chain ID controls the internal state, latent filenames, video filenames, and
 The saved latent contains H3's paired video/audio representation. It is
 intended only for this addon’s Auto Chain Motion Context `context_latent` input.
 
-### Avoid competing H3 patch packs
+### Avoid outdated H3 patch packs
 
 The original H3 Motion Context package is optional and can coexist with this
-addon. Do not run multiple different H3 patch packs that modify the same
-ComfyUI H3 internals; the first compatible patch remains active and an
-incompatible patch is rejected clearly.
+addon. Do not use an older H3 patch pack that modifies ComfyUI internals;
+ComfyUI 0.34.0 makes those patches unnecessary.
 
 ## Troubleshooting
 

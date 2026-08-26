@@ -1,4 +1,4 @@
-"""Automatic H3 clip chaining addon for the original Motion Context node."""
+"""Automatic H3 clip chaining addon for ComfyUI 0.34.0 and newer."""
 
 from .auto_chain_nodes import (
     NODE_CLASS_MAPPINGS,

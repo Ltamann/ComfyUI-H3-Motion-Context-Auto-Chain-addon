@@ -3,6 +3,9 @@
 
 """Pin previous-clip motion at the head of an H3 clip.
 
+Requires ComfyUI 0.34.0 or newer, which provides native arbitrary H3
+keyframe anchors and keyframe/reference payload handling.
+
 Wire it between a stock H3 conditioning node and the sampler:
 
     MiniMaxH3ImageToVideo / MiniMaxH3ReferenceToVideo (or the t2v path)
@@ -45,62 +48,12 @@ try:
 except ImportError:  # ComfyUI always ships safetensors; belt and braces
     _st_load = _st_save = None
 
-from .patch_layout import (
-    MC_KEY,
-    MC_AUDIO_KEY,
-    apply_patch as _apply_layout_patch,
-    is_applied as _layout_patch_applied,
-)
-from .patch_payload import (
-    apply_patch as _apply_payload_patch,
-    is_applied as _payload_patch_applied,
-)
-
 try:
     import torchaudio
 except ImportError:
     torchaudio = None
 
 _LOG = logging.getLogger("h3_motion_context")
-
-
-def _ensure_layout_patch():
-    """Install the layout patch, once, the first time a node runs.
-
-    ComfyUI imports every folder in custom_nodes at startup, so patching
-    at import time would put this pack's wrappers in the path of every H3
-    graph on the machine, including graphs that never go near these
-    nodes. Installing on first use instead means the pack sitting in
-
-    custom_nodes changes nothing at all until you actually chain a clip.
-
-    The cost is that a self-test failure shows up on the first render
-    rather than in the startup log. The message is the same either way,
-    and it still refuses rather than rendering something wrong.
-    """
-    if _layout_patch_applied():
-        return
-    if not _apply_layout_patch():
-        raise RuntimeError(
-            "h3_motion_context: the layout patch could not be applied, so "
-            "interior anchors would be rejected by ComfyUI. The reason was "
-            "logged just above this error.")
-
-
-def _ensure_payload_patch():
-    """Install the payload patch, once, before anything needs it.
-
-    Only reached when audio is being pinned, which is the only case where
-    a ref and the keyframes have to coexist.
-    """
-    if _payload_patch_applied():
-        return
-    if not _apply_payload_patch():
-        raise RuntimeError(
-            "h3_motion_context: the payload patch could not be applied. "
-            "Without it the audio ref would overwrite the pinned video "
-            "latents and the motion context would be lost. The reason was "
-            "logged just above this error.")
 
 
 FRAME_PER_TOKEN = (1, 4, 4, 4, 4)
@@ -427,8 +380,6 @@ class AutoChainMotionContextCore:
         audio_mode, crop = AUDIO_MODE, CROP
         context_length = int(context_length)
 
-        _ensure_layout_patch()
-
         video = _video_from_latent(latent)
         latent_t = int(video.shape[2])
         width = int(video.shape[4]) * 16
@@ -555,21 +506,16 @@ class AutoChainMotionContextCore:
 
         keyframes = []
         for p, blk in zip(indices, blocks):
-            keyframes.append({
-                # stock code accepts only 0 or frame_count-1 here; the real
-                # position rides under MC_KEY and the layout patch applies it
-                "resolved_frame_index": 0,
-                MC_KEY: p,
-                "latent": blk,
-            })
+            keyframes.append({"resolved_frame_index": p, "latent": blk})
 
         ref_audio_t = 0
         audio_ref = None
+        audio_kf = None
+        audio_end_frame = None
         a_frames = 0
         audio_src = "off"
         if context_latent is not None or context_audio is not None:
 
-            _ensure_payload_patch()
             # the audio window is independent of the video one: audio cond
             # rows cost rows but never cost delivered frames
             a_frames = int(audio_context_length) or span
@@ -624,25 +570,19 @@ class AutoChainMotionContextCore:
                 # the same grid as the sound being generated from it.
                 end_coord = round(FRAME_RESCALE * end_frame)
                 end_frame = end_coord / FRAME_RESCALE
-                ref[MC_AUDIO_KEY] = end_frame
-            # APPEND rather than assign. Ref2VA conditioning already
-            # carries the graph's own image, video and audio reference
-            # blocks, and assigning minimax_refs outright would replace
-            # the lot. Applied as a second call so the keyframe values
-            # land first and this one only touches the reference list.
-            audio_ref = ref
+                audio_kf = {
+                    "resolved_frame_index": end_frame - ref_audio_t / FRAME_RESCALE,
+                    "audio_latent": audio_latent,
+                }
+                audio_end_frame = end_frame
+            else:
+                audio_ref = ref
 
         # MERGE with any keyframes already on the conditioning instead of
         # replacing them. A last_frame anchor from the upstream node is a
         # legitimate companion to a chained head: the pinned run decides
         # how the clip starts, the anchor decides where it ends. Each kept
-        # keyframe is tagged with its own position under MC_KEY so the
-        # layout patch gives it the same reference compensation as ours;
-        # untagged it would either trip the mixed-keyframe guard (with
-
-        # audio) or sit uncompensated next to compensated anchors (without).
-        # At p = frame_count-1 the patch reproduces stock's coordinate bit
-        # for bit, so tagging changes nothing when no reference is present.
+        # Native ComfyUI carries each anchor at its real timeline position.
         # Anchors inside the pinned head are dropped: the pinned run
         # already decides those frames, and a second cond block at the
         # same coordinate would fight it.
@@ -652,24 +592,18 @@ class AutoChainMotionContextCore:
         for emb, extra in conditioning:
             d = extra.copy()
             prior = d.get("minimax_keyframes") or []
-            pfc = d.get("minimax_frame_count")
-            if prior and pfc is not None and int(pfc) != frame_count:
-                raise ValueError(
-                    "h3_motion_context: the conditioning carries keyframes "
-                    "resolved for a %d frame clip, but the latent is %d "
-                    "frames. Wire the conditioning and the latent from the "
-                    "same node." % (int(pfc), frame_count))
             kept = []
             for kf in prior:
-                p = int(kf.get(MC_KEY, kf.get("resolved_frame_index", 0)))
+                p = kf.get("resolved_frame_index", 0)
+                if p >= frame_count:
+                    raise ValueError(
+                        "h3_motion_context: keyframe %s is outside this %d-frame clip."
+                        % (p, frame_count))
                 if p < head_end:
                     dropped.append(p)
                     continue
-                kf = dict(kf)
-                kf[MC_KEY] = p
-                kept.append(kf)
-            d["minimax_keyframes"] = kept + keyframes
-            d["minimax_frame_count"] = frame_count
+                kept.append(dict(kf))
+            d["minimax_keyframes"] = kept + keyframes + ([audio_kf] if audio_kf is not None else [])
             out.append([emb, d])
         if dropped:
             _LOG.warning(
@@ -691,7 +625,7 @@ class AutoChainMotionContextCore:
                   ("%d frames -> %d latent steps (%.3fs) from %s, %s"
                    % (a_frames, ref_audio_t, ref_audio_t / AUDIO_HZ, audio_src,
                       "on the timeline ending at frame %.3f"
-                      % float(ref.get(MC_AUDIO_KEY))
+                      % audio_end_frame
                       if audio_mode == "timeline" else "stock ref placement"))
                   if ref_audio_t else "off")
         return (out, trim)
@@ -869,7 +803,7 @@ def _resolve_latent_path(path, clip_index=0):
                 # NOT matched: their numbers count runs, not clips, so a
                 # reject could be sitting in any of them.
                 endings = ("_%05d.safetensors" % idx,
-                           "_clip%03d.safetensors" % idx)  # older versions
+                           "_clip%03d.safetensors" % idx)  # legacy filename
                 files = [os.path.join(c, f) for f in os.listdir(c)
                          if f.endswith(endings)]
                 if not files:
@@ -1053,6 +987,3 @@ class MiniMaxH3MotionContextLoadLatent:
         # input accepts it, which is the point -- it cannot be mistaken
         # for a decodable latent without failing loudly downstream
         return ({"samples": [data["video"], data["audio"]]},)
-
-
-

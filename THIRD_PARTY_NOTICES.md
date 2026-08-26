@@ -8,8 +8,7 @@ The standalone Motion Context implementation in this addon is derived from:
 
 Copyright (C) 2026 NikoDemon80.
 
-The derived implementation and patch helpers are modified versions of the
-upstream `nodes.py`, `patch_layout.py`, and `patch_payload.py`. They remain
+The derived implementation is a modified version of the upstream `nodes.py`. It remains
 licensed under the GNU General Public License, version 3. The complete GPLv3
 license text is included in `LICENSE`.
 
