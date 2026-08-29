@@ -62,11 +62,6 @@ FPS = 24  # H3's native rate; audio latents run at 40 Hz, hence FRAME_RESCALE 5/
 FRAME_RESCALE = 5.0 / 3.0
 AUDIO_HZ = 40.0
 
-
-def _rounded_audio_steps(frames):
-    value = Fraction(int(frames) * 40, 24)
-    return (value.numerator + value.denominator // 2) // value.denominator
-
 # Run lengths the video VAE's downscale formula max(1, (n - 5) // 17 * 5 + 2)
 # actually distinguishes. Anything between two grid points encodes to the same
 # number of latent steps as the lower one, but the steps then cover the FIRST
@@ -258,14 +253,12 @@ def _audio_tail_from_latent(latent, a_frames):
     40 Hz latent steps and overhang is the signed fraction of a step by
     which the clip's audio grid overshoots its last pixel frame.
 
-    H3 rounds the audio grid to the NEAREST step, not up, so overhang is
-    negative for a third of legal clip lengths. 5/3 of a frame count
-    lands on .0, .333 or .667 and never on .5, so there are exactly three
-    cases:
+    The saved AV latent is authoritative for the audio grid. Depending on
+    the audio VAE/input duration it can be short or long relative to the
+    video grid, so the signed phase is measured rather than inferred:
 
-        frames % 3 == 0    90 -> 150.00, exact, overhang  0
-        frames % 3 == 1   124 wants 206.67, allocates 207, overhang +1/3
-        frames % 3 == 2   260 wants 433.33, allocates 433, overhang -1/3
+        124 video frames, 206 audio steps -> overhang -2/3 step
+        175 video frames, 291 audio steps -> overhang -2/3 step
 
     A positive overhang means the latent's final step reaches past the
     last frame, a negative one means it stops short. Either way the
@@ -288,14 +281,19 @@ def _audio_tail_from_latent(latent, a_frames):
                          "got shape %s" % (tuple(audio.shape),))
     total_t = int(audio.shape[-1])
     frames = _pixel_frames(int(video.shape[2]))
-    expected_t = _rounded_audio_steps(frames)
-    if total_t != expected_t:
+    overhang_fraction = Fraction(total_t) - Fraction(frames * 5, 3)
+    if abs(overhang_fraction) > 1:
         raise ValueError(
-            "h3_motion_context: context_latent has %d audio steps for %d "
-            "video frames; H3 requires %d. Refusing an audio/video phase "
-            "shift. Regenerate this continuation latent with the current "
-            "H3 AV latent node." % (total_t, frames, expected_t))
-    overhang = float(Fraction(total_t) - Fraction(frames * 5, 3))
+            "h3_motion_context: context_latent audio grid is %d steps for "
+            "%d video frames (phase %s step); refusing an invalid latent "
+            "rather than shifting lipsync." %
+            (total_t, frames, overhang_fraction))
+    overhang = float(overhang_fraction)
+    if overhang:
+        _LOG.info(
+            "h3_motion_context: compensating audio phase %s step for %d "
+            "video frames (%d audio steps)",
+            overhang_fraction, frames, total_t)
     rt_value = Fraction(int(a_frames) * 40, 24)
     rt = (rt_value.numerator + rt_value.denominator // 2) // rt_value.denominator
     if rt > total_t:
