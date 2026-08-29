@@ -35,6 +35,7 @@ anchor_mode
           what this mode is asking.
 """
 
+from fractions import Fraction
 import logging
 import os
 
@@ -60,6 +61,11 @@ FRAME_PER_TOKEN = (1, 4, 4, 4, 4)
 FPS = 24  # H3's native rate; audio latents run at 40 Hz, hence FRAME_RESCALE 5/3
 FRAME_RESCALE = 5.0 / 3.0
 AUDIO_HZ = 40.0
+
+
+def _rounded_audio_steps(frames):
+    value = Fraction(int(frames) * 40, 24)
+    return (value.numerator + value.denominator // 2) // value.denominator
 
 # Run lengths the video VAE's downscale formula max(1, (n - 5) // 17 * 5 + 2)
 # actually distinguishes. Anything between two grid points encodes to the same
@@ -257,7 +263,7 @@ def _audio_tail_from_latent(latent, a_frames):
     lands on .0, .333 or .667 and never on .5, so there are exactly three
     cases:
 
-        frames % 3 == 0   124 -> n/a          exact, overhang  0
+        frames % 3 == 0    90 -> 150.00, exact, overhang  0
         frames % 3 == 1   124 wants 206.67, allocates 207, overhang +1/3
         frames % 3 == 2   260 wants 433.33, allocates 433, overhang -1/3
 
@@ -282,16 +288,16 @@ def _audio_tail_from_latent(latent, a_frames):
                          "got shape %s" % (tuple(audio.shape),))
     total_t = int(audio.shape[-1])
     frames = _pixel_frames(int(video.shape[2]))
-    overhang = total_t - FRAME_RESCALE * frames
-    # legal values are exactly 0, +1/3 and -1/3; the band is the widest
-    # one that admits all three and still rejects a grid that is out by a
-    # whole step or more
-    if not (-0.5 < overhang < 0.5):
-        _LOG.warning(
-            "h3_motion_context: context_latent audio grid is unexpected "
-            "(%d steps for %d frames); assuming no overhang.", total_t, frames)
-        overhang = 0.0
-    rt = int(round(a_frames / float(FPS) * AUDIO_HZ))
+    expected_t = _rounded_audio_steps(frames)
+    if total_t != expected_t:
+        raise ValueError(
+            "h3_motion_context: context_latent has %d audio steps for %d "
+            "video frames; H3 requires %d. Refusing an audio/video phase "
+            "shift. Regenerate this continuation latent with the current "
+            "H3 AV latent node." % (total_t, frames, expected_t))
+    overhang = float(Fraction(total_t) - Fraction(frames * 5, 3))
+    rt_value = Fraction(int(a_frames) * 40, 24)
+    rt = (rt_value.numerator + rt_value.denominator // 2) // rt_value.denominator
     if rt > total_t:
         _LOG.warning("h3_motion_context: asked for %d audio steps, the latent "
                      "has %d. Pinning all of it.", rt, total_t)
@@ -551,7 +557,7 @@ class AutoChainMotionContextCore:
                 # frame by `overhang` of a step, signed, because H3
                 # rounds its audio grid to the nearest step and so falls
                 # short as often as it reaches past. The end coordinate
-                # moves by exactly that much; the layout patch takes a
+                # moves by exactly that much; the native layout accepts a
                 # fractional frame index.
                 end_frame = float(span if anchor_mode == "head" else 0)
                 end_frame += overhang / FRAME_RESCALE
@@ -581,8 +587,8 @@ class AutoChainMotionContextCore:
         # MERGE with any keyframes already on the conditioning instead of
         # replacing them. A last_frame anchor from the upstream node is a
         # legitimate companion to a chained head: the pinned run decides
-        # how the clip starts, the anchor decides where it ends. Each kept
-        # Native ComfyUI carries each anchor at its real timeline position.
+        # how the clip starts, the anchor decides where it ends. Native
+        # ComfyUI carries each anchor at its real timeline position.
         # Anchors inside the pinned head are dropped: the pinned run
         # already decides those frames, and a second cond block at the
         # same coordinate would fight it.

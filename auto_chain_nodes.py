@@ -1,6 +1,7 @@
 """In-graph audio chunking and prompt requeue for H3 continuation chains."""
 
 import copy
+from fractions import Fraction
 import logging
 import math
 import os
@@ -16,6 +17,11 @@ import numpy as np
 import server
 import torch
 from PIL import Image
+from comfy_extras.nodes_minimax_h3 import (
+    adapt_canvas,
+    align_frame_count,
+    _resize as _h3_resize,
+)
 
 from .motion_context_core import (
     AutoChainMotionContextCore,
@@ -34,6 +40,9 @@ _LOG = logging.getLogger("h3_motion_context")
 _CHAINS = {}
 _LOCK = threading.Lock()
 DEFAULT_FPS = 24.0
+H3_AUDIO_SAMPLE_RATE = 32000
+H3_FRAME_BLOCK = 17
+H3_VALID_LENGTH_OFFSET = 5
 
 
 def _streams_from_latent(latent):
@@ -276,9 +285,39 @@ def _write_audio_wav(audio, path):
         output.writeframes(pcm.tobytes())
 
 
+def _chain_frame_range(clip, chunk_frames):
+    """Return the delivered frame range for a token-aligned chain clip."""
+    first_frames = int(chunk_frames) + H3_VALID_LENGTH_OFFSET
+    if int(clip) == 1:
+        return 0, first_frames
+    start = first_frames + (int(clip) - 2) * int(chunk_frames)
+    return start, start + int(chunk_frames)
+
+
+def _chain_clip_count(total_frames, chunk_frames):
+    first_frames = int(chunk_frames) + H3_VALID_LENGTH_OFFSET
+    if total_frames <= first_frames:
+        return 1
+    return 1 + int(math.ceil((total_frames - first_frames) /
+                             float(chunk_frames)))
+
+
+def _h3_chain_chunk_frames(chunk_seconds, fps):
+    requested = max(1, int(round(float(chunk_seconds) * float(fps))))
+    aligned = max(H3_FRAME_BLOCK,
+                  int(math.ceil(requested / float(H3_FRAME_BLOCK))) *
+                  H3_FRAME_BLOCK)
+    if aligned != requested:
+        _LOG.warning(
+            "h3_motion_context: adjusted %.3fs chunk from %d to %d frames "
+            "to preserve H3 17-frame latent blocks",
+            float(chunk_seconds), requested, aligned)
+    return aligned
+
+
 def _available_chain_clips(run_name, total_frames, chunk_frames):
     """Return existing clips in timeline order, allowing sparse chains."""
-    total_clips = max(1, int(math.ceil(total_frames / float(chunk_frames))))
+    total_clips = _chain_clip_count(total_frames, chunk_frames)
     paths = []
     frame_counts = []
     clip_indices = []
@@ -287,24 +326,33 @@ def _available_chain_clips(run_name, total_frames, chunk_frames):
         if not os.path.isfile(path):
             continue
         paths.append(path)
-        frame_counts.append(min(chunk_frames,
-                                max(0, total_frames - (clip - 1) * chunk_frames)))
+        start, end = _chain_frame_range(clip, chunk_frames)
+        frame_counts.append(min(end - start, max(0, total_frames - start)))
         clip_indices.append(clip)
     return paths, frame_counts, clip_indices
 
 
 def _audio_for_clips(audio, clip_indices, chunk_frames, fps):
     """Concatenate source-audio ranges belonging to the available clips."""
-    waveform = audio["waveform"]
+    waveform = audio["waveform"].detach().cpu()
     sample_rate = int(audio["sample_rate"])
     pieces = []
     for clip in clip_indices:
-        start = int(round((clip - 1) * chunk_frames * sample_rate / fps))
-        end = int(round(clip * chunk_frames * sample_rate / fps))
+        start_frame, end_frame = _chain_frame_range(clip, chunk_frames)
+        start = _frame_sample_index(start_frame, sample_rate, fps)
+        end = _frame_sample_index(end_frame, sample_rate, fps)
         pieces.append(waveform[..., start:min(end, waveform.shape[-1])])
     if not pieces:
         return {"waveform": waveform[..., :0], "sample_rate": sample_rate}
     return {"waveform": torch.cat(pieces, dim=-1), "sample_rate": sample_rate}
+
+
+def _frame_sample_index(frame, sample_rate, fps):
+    """Map a video frame boundary to the nearest source-audio sample."""
+    rate = Fraction(str(float(fps))).limit_denominator(1000000)
+    numerator = int(frame) * int(sample_rate) * rate.denominator
+    denominator = int(rate.numerator)
+    return (numerator + denominator // 2) // denominator
 
 
 def _stitch_videos(paths, frame_counts, total_frames, source_audio,
@@ -329,18 +377,23 @@ def _stitch_videos(paths, frame_counts, total_frames, source_audio,
         _write_audio_wav(source_audio, audio_path)
         args.extend(["-i", audio_path])
         audio_index = len(paths)
-        total_seconds = float(total_frames) / fps
+        sample_rate = int(source_audio["sample_rate"])
+        total_samples = _frame_sample_index(total_frames, sample_rate, fps)
         filters.append(
-            "[%d:a:0]atrim=start=0,apad,atrim=end=%.9f,"
-            "asetpts=PTS-STARTPTS[a]" % (audio_index, total_seconds))
+            "[%d:a:0]atrim=start_sample=0,apad,atrim=end_sample=%d,"
+            "asetpts=PTS-STARTPTS[a]" % (audio_index, total_samples))
     else:
         audio_inputs = []
         for index, path in enumerate(paths):
             frames = int(frame_counts[index])
-            duration = float(frames) / fps
+            samples = _frame_sample_index(frames,
+                                          H3_AUDIO_SAMPLE_RATE, fps)
+            # Each clip was encoded to AAC separately. Remove its 1024-sample
+            # priming frame before concatenating the decoded audio streams.
             filters.append(
-                "[%d:a:0]atrim=start=0:end=%.9f,asetpts=PTS-STARTPTS[a%d]" %
-                (index, duration, index))
+                "[%d:a:0]atrim=start_sample=1024,asetpts=PTS-STARTPTS,apad,"
+                "atrim=end_sample=%d,asetpts=PTS-STARTPTS[a%d]" %
+                (index, samples, index))
             audio_inputs.append("[a%d]" % index)
         filters.append("%sconcat=n=%d:v=0:a=1[a]" %
                        ("".join(audio_inputs), len(paths)))
@@ -406,6 +459,36 @@ def _apply_reference_mode(current, clip):
     return mode
 
 
+def _apply_reference_video(current, start_frame, end_frame):
+    """Keep a directly wired H3 reference video on the chain timeline."""
+    for node_id, node in list(current.items()):
+        if node.get("class_type") != "MiniMaxH3ReferenceToVideo":
+            continue
+        key = "ref_videos.ref_video_0"
+        connection = node.get("inputs", {}).get(key)
+        if not isinstance(connection, (list, tuple)) or len(connection) < 2:
+            continue
+        source = current.get(str(connection[0])) or current.get(connection[0])
+        source_type = source.get("class_type") if source else None
+        if source_type == "MiniMaxH3AutoChainAudio":
+            continue
+        adapter_id = "__h3_auto_ref_video_%s" % node_id
+        if source_type != "MiniMaxH3AutoChainReferenceVideo":
+            current[adapter_id] = {
+                "class_type": "MiniMaxH3AutoChainReferenceVideo",
+                "inputs": {
+                    "image": list(connection),
+                    "start_frame": int(start_frame),
+                    "end_frame": int(end_frame),
+                },
+            }
+            node["inputs"][key] = [adapter_id, 0]
+        else:
+            current[adapter_id]["inputs"]["start_frame"] = int(start_frame)
+            current[adapter_id]["inputs"]["end_frame"] = int(end_frame)
+    return current
+
+
 def _log_clip_inputs(current, clip, start, end, sample_rate, prompt,
                      reference_frame_path):
     reference_mode = next(
@@ -466,7 +549,7 @@ def _chain_state(chain_id, audio, chunk_seconds, fps, trim_frames,
     total_samples = int(waveform.shape[-1])
     total_seconds = total_samples / float(sample_rate)
     fps = float(fps)
-    chunk_frames = max(1, int(round(float(chunk_seconds) * fps)))
+    chunk_frames = _h3_chain_chunk_frames(chunk_seconds, fps)
     total_frames = max(1, int(math.ceil(total_seconds * fps)))
     with _LOCK:
         state = _CHAINS.get(chain_id)
@@ -504,9 +587,9 @@ def _chain_state(chain_id, audio, chunk_seconds, fps, trim_frames,
                 "total_frames": total_frames,
                 "videos": existing_videos,
                 "frame_counts": [
-                    min(chunk_frames,
-                        max(0, total_frames - (clip - 1) * chunk_frames))
+                    min(end - start, max(0, total_frames - start))
                     for clip in range(1, first_clip)
+                    for start, end in [_chain_frame_range(clip, chunk_frames)]
                 ],
                 "style_prompt": style_prompt,
                 "clip_prompts": clip_prompts,
@@ -580,12 +663,17 @@ class MiniMaxH3AutoChainAudio:
             "end_clip": ("INT", {"default": 0, "min": 0, "max": 9999,
                                    "tooltip": "Last clip to process. 0 means "
                                               "continue until the audio ends."}),
+        }, "optional": {
+            "ref_video": ("IMAGE", {
+                "tooltip": "Optional VHS reference video IMAGE batch at the "
+                           "chain FPS. Only the current audio-matched frame "
+                           "window is selected and resized for H3."}),
         }}
 
     RETURN_TYPES = ("AUDIO", "FLOAT", "INT", "STRING", "STRING", "H3_CHAIN",
-                    "AUDIO")
+                    "AUDIO", "IMAGE")
     RETURN_NAMES = ("audio", "chunk_seconds", "clip_index", "chain_id",
-                    "prompt", "chain_config", "source_audio")
+                    "prompt", "chain_config", "source_audio", "ref_video")
     FUNCTION = "chunk"
     CATEGORY = "conditioning/minimax"
     DESCRIPTION = ("Splits one AUDIO input into sequential chunks and reports "
@@ -597,7 +685,7 @@ class MiniMaxH3AutoChainAudio:
                    trim_frames=22, final_tail_mode="exact audio duration",
                    final_tail_frames=24, reset=False,
                    style_prompt="", clip_prompts="",
-                   start_clip=1, end_clip=0):
+                   start_clip=1, end_clip=0, ref_video=None):
         if reset or audio is None:
             return float("NaN")
         with _LOCK:
@@ -612,7 +700,7 @@ class MiniMaxH3AutoChainAudio:
               trim_frames=22, final_tail_mode="exact audio duration",
               final_tail_frames=24, reset=False,
               style_prompt="", clip_prompts="",
-              start_clip=1, end_clip=0):
+              start_clip=1, end_clip=0, ref_video=None):
         state = _chain_state(chain_id, audio, float(chunk_seconds), float(fps),
                              int(trim_frames), final_tail_mode,
                              int(final_tail_frames), reset,
@@ -622,8 +710,8 @@ class MiniMaxH3AutoChainAudio:
         clip = int(state["clip"])
         prompt = _prompt_for_clip(state["style_prompt"],
                                   state["clip_prompts"], clip)
-        start_frame = (clip - 1) * state["chunk_frames"]
-        requested_end_frame = clip * state["chunk_frames"]
+        start_frame, requested_end_frame = _chain_frame_range(
+            clip, state["chunk_frames"])
         end_frame = min(state["total_frames"], requested_end_frame)
         source_finished = end_frame >= state["total_frames"]
         partial_final = source_finished and end_frame < requested_end_frame
@@ -642,19 +730,31 @@ class MiniMaxH3AutoChainAudio:
         output_tail = 0
         if partial_final and state["final_tail_mode"] == "audio plus tail":
             output_tail = state["final_tail_frames"]
-        generation_end_frame = start_frame + state["chunk_frames"]
+        generation_end_frame = start_frame + (end_frame - start_frame)
         if clip > 1:
             generation_end_frame += effective_trim
         if partial_final:
             generation_end_frame += output_tail
         output_end_frame = end_frame + output_tail
-        start = int(round(start_frame / state["fps"] * state["sample_rate"]))
-        end = int(round(generation_end_frame / state["fps"] *
-                        state["sample_rate"]))
+        # The continuation head is pinned from the previous latent and then
+        # removed by Motion Context Trim. Feed that same frame span as audio
+        # pre-roll so the delivered clip still starts at source start_frame.
+        audio_start_frame = max(0, start_frame - effective_trim)
+        start = _frame_sample_index(audio_start_frame,
+                                    state["sample_rate"], state["fps"])
+        requested_audio_end_frame = end_frame + output_tail
+        audio_frame_count = align_frame_count(
+            max(5, requested_audio_end_frame - audio_start_frame))
+        audio_end_frame = audio_start_frame + audio_frame_count
+        _apply_reference_video(_current_graph(), audio_start_frame,
+                               audio_end_frame)
+        end = _frame_sample_index(audio_end_frame,
+                                  state["sample_rate"], state["fps"])
         if start >= end:
             raise RuntimeError("h3_motion_context: chain has already finished; "
                                "enable reset for a new run")
-        chunk_waveform = audio["waveform"][..., start:min(end, state["total_samples"])].contiguous()
+        source_waveform = audio["waveform"].detach().cpu()
+        chunk_waveform = source_waveform[..., start:min(end, state["total_samples"])].contiguous()
         if end > state["total_samples"]:
             chunk_waveform = torch.nn.functional.pad(
                 chunk_waveform, (0, end - state["total_samples"]))
@@ -679,6 +779,8 @@ class MiniMaxH3AutoChainAudio:
             "final_tail_mode": state["final_tail_mode"],
             "effective_trim_frames": effective_trim,
             "context_latent_available": context_available,
+            "audio_start_frame": audio_start_frame,
+            "audio_end_frame": audio_end_frame,
             "audio_start_sample": start,
             "audio_end_sample": end,
             "source_seconds": source_seconds,
@@ -707,8 +809,90 @@ class MiniMaxH3AutoChainAudio:
         _log_clip_inputs(_current_graph(), clip, start, end,
                          state["sample_rate"], prompt,
                          state.get("reference_frame_path"))
+        ref_video_chunk = _reference_video_window(
+            ref_video, audio_start_frame, audio_end_frame,
+            state["fps"], clip)
         return ({"waveform": chunk_waveform, "sample_rate": state["sample_rate"]},
-                seconds, clip, chain_id, prompt, chain_config, audio)
+                seconds, clip, chain_id, prompt, chain_config,
+                {"waveform": source_waveform,
+                 "sample_rate": state["sample_rate"]},
+                ref_video_chunk)
+
+
+def _reference_video_window(video, start_frame, end_frame, fps, clip):
+    if video is None:
+        return None
+    if isinstance(video, torch.Tensor):
+        video = video.detach().cpu()
+        frame_count = max(0, int(end_frame) - int(start_frame))
+        if frame_count < 5:
+            _LOG.warning(
+                "h3_motion_context: reference video has fewer than 5 frames "
+                "for clip %d; skipping its reference video", clip)
+            return None
+        start = max(0, int(start_frame))
+        frames = video[start:start + frame_count]
+        if frames.shape[0] == 0:
+            raise ValueError(
+                "h3_motion_context: reference video has no frames in the "
+                "audio-matched window for clip %d" % clip)
+        if frames.shape[0] < frame_count:
+            frames = torch.cat((
+                frames,
+                frames[-1:].repeat(frame_count - frames.shape[0], 1, 1, 1)),
+                dim=0)
+        width, height = int(frames.shape[2]), int(frames.shape[1])
+        target_width, target_height = adapt_canvas(width, height)
+        if width * height < target_width * target_height:
+            target_width = max(32, round(width / 32) * 32)
+            target_height = max(32, round(height / 32) * 32)
+        frames = _h3_resize(frames, target_width, target_height, "disabled")
+        if frames.shape[0] != frame_count:
+            raise RuntimeError(
+                "h3_motion_context: reference video frame window changed "
+                "during resize for clip %d" % clip)
+        return frames.contiguous()
+    source_fps = float(video.get_frame_rate())
+    if not math.isclose(source_fps, float(fps), rel_tol=0.0, abs_tol=1e-6):
+        raise ValueError(
+            "h3_motion_context: reference video FPS %.6f does not match "
+            "chain FPS %.6f for clip %d" % (source_fps, fps, clip))
+    frame_count = max(0, int(end_frame) - int(start_frame))
+    if frame_count < 5:
+        _LOG.warning(
+            "h3_motion_context: reference video has fewer than 5 frames "
+            "for clip %d; skipping its reference video", clip)
+        return None
+    trimmed = video.as_trimmed(
+        float(start_frame) / float(fps),
+        float(frame_count) / float(fps),
+        strict_duration=False)
+    if trimmed is None:
+        raise ValueError(
+            "h3_motion_context: reference video does not contain the "
+            "audio-matched frame window for clip %d" % clip)
+    frames = trimmed.get_components().images.detach().cpu()
+    if frames.shape[0] == 0:
+        raise ValueError(
+            "h3_motion_context: reference video has no frames in the "
+            "audio-matched window for clip %d" % clip)
+    if frames.shape[0] < frame_count:
+        frames = torch.cat((
+            frames,
+            frames[-1:].repeat(frame_count - frames.shape[0], 1, 1, 1)),
+            dim=0)
+    frames = frames[:frame_count]
+    width, height = int(frames.shape[2]), int(frames.shape[1])
+    target_width, target_height = adapt_canvas(width, height)
+    if width * height < target_width * target_height:
+        target_width = max(32, round(width / 32) * 32)
+        target_height = max(32, round(height / 32) * 32)
+    frames = _h3_resize(frames, target_width, target_height, "disabled")
+    if frames.shape[0] != frame_count:
+        raise RuntimeError(
+            "h3_motion_context: reference video frame window changed "
+            "during resize for clip %d" % clip)
+    return frames.contiguous()
 
 
 class MiniMaxH3AutoChain:
@@ -752,9 +936,11 @@ class MiniMaxH3AutoChain:
         use_original_audio = audio_source in ("original", "original audio input")
         use_generated_audio = audio_source in ("generated", "generated video audio")
         if use_original_audio and audio is None:
-            raise ValueError(
-                "h3_motion_context: original audio input requires the "
-                "complete source audio connected to H3 Auto Chain + Stitch")
+            _LOG.warning(
+                "h3_motion_context: original audio input is not connected; "
+                "using generated video audio")
+            use_original_audio = False
+            use_generated_audio = True
         if not use_original_audio and not use_generated_audio:
             raise ValueError("h3_motion_context: unknown audio source %r" %
                              audio_source)
@@ -766,7 +952,8 @@ class MiniMaxH3AutoChain:
                 raise RuntimeError("h3_motion_context: connect the matching "
                                    "Auto Chain Audio node")
             clip = int(state["clip"])
-            next_start_frame = clip * state["chunk_frames"]
+            next_start_frame = _chain_frame_range(
+                clip + 1, state["chunk_frames"])[0]
             finished = next_start_frame >= state["total_frames"]
             if state.get("end_clip", 0):
                 finished = finished or clip >= int(state["end_clip"])
@@ -791,13 +978,14 @@ class MiniMaxH3AutoChain:
                 imageio_ffmpeg.get_ffmpeg_exe(), "-hide_banner", "-loglevel",
                 "error", "-y", "-i", raw_path,
                 "-map", "0:v:0", "-map", "0:a:0?",
-                "-vf", "fps=%.6f,tpad=stop_mode=clone:stop_duration=10" % fps,
+                "-vf", "setpts=PTS-STARTPTS,fps=%.6f,tpad=stop_mode=clone:stop_duration=10" % fps,
                 "-frames:v", str(clip_frames),
-                "-af", "atrim=start=0:end=%.9f,apad,atrim=end=%.9f,asetpts=PTS-STARTPTS" %
-                       (clip_duration, clip_duration),
+                "-af", "atrim=start_sample=0,apad,atrim=end_sample=%d,asetpts=PTS-STARTPTS" %
+                       _frame_sample_index(clip_frames,
+                                           H3_AUDIO_SAMPLE_RATE, fps),
                 "-c:v", "libx264", "-preset", "medium", "-crf", "18",
                 "-pix_fmt", "yuv420p", "-r", "%.6f" % fps,
-                "-c:a", "aac", "-b:a", "192k", "-t", "%.9f" % clip_duration,
+                "-c:a", "aac", "-b:a", "192k",
                 "-avoid_negative_ts", "make_zero", temp_path,
             ], check=True)
             os.replace(temp_path, clip_path)
@@ -857,8 +1045,8 @@ class MiniMaxH3AutoChain:
                     audio, clip_indices, state["chunk_frames"], fps)
             _stitch_videos(paths, frame_counts, stitch_frames, stitch_audio,
                            final_path, fps)
-            if len(paths) < int(math.ceil(state["total_frames"] /
-                                         float(state["chunk_frames"]))):
+            if len(paths) < _chain_clip_count(state["total_frames"],
+                                              state["chunk_frames"]):
                 _LOG.warning(
                     "h3_motion_context: stitched sparse chain with clips %s",
                     ", ".join(str(index) for index in clip_indices))
@@ -866,6 +1054,31 @@ class MiniMaxH3AutoChain:
                 _cleanup_chain_latents(chain_config["run_name"])
             _LOG.info("h3_motion_context: automatic chain complete at clip %d", clip)
         return (video,)
+
+
+class MiniMaxH3AutoChainReferenceVideo:
+    """Slice a reference frame batch to the current automatic-chain window."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "image": ("IMAGE",),
+            "start_frame": ("INT", {"default": 0, "min": 0,
+                                      "max": 1000000}),
+            "end_frame": ("INT", {"default": 120, "min": 1,
+                                    "max": 1000000}),
+        }}
+
+    RETURN_TYPES = ("IMAGE",)
+    FUNCTION = "slice"
+    CATEGORY = "conditioning/minimax"
+
+    def slice(self, image, start_frame, end_frame):
+        start = min(max(0, int(start_frame)), int(image.shape[0]))
+        end = min(max(start, int(end_frame)), int(image.shape[0]))
+        if end - start < 5:
+            return (None,)
+        return (image[start:end].contiguous(),)
 
 
 class MiniMaxH3AutoChainFrameReference:
@@ -926,6 +1139,7 @@ NODE_CLASS_MAPPINGS = {
     "MiniMaxH3AutoChainLoadLatent": MiniMaxH3AutoChainLoadLatent,
     "MiniMaxH3AutoChainAudio": MiniMaxH3AutoChainAudio,
     "MiniMaxH3AutoChain": MiniMaxH3AutoChain,
+    "MiniMaxH3AutoChainReferenceVideo": MiniMaxH3AutoChainReferenceVideo,
     "MiniMaxH3AutoChainFrameReference": MiniMaxH3AutoChainFrameReference,
 }
 
@@ -936,5 +1150,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MiniMaxH3AutoChainLoadLatent": "H3 Auto Chain Load Latent",
     "MiniMaxH3AutoChainAudio": "H3 Auto Chain Audio",
     "MiniMaxH3AutoChain": "H3 Auto Chain + Stitch",
+    "MiniMaxH3AutoChainReferenceVideo": "H3 Auto Chain Reference Video",
     "MiniMaxH3AutoChainFrameReference": "H3 Auto Chain Frame Reference",
 }
