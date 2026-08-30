@@ -379,7 +379,8 @@ class AutoChainMotionContextCore:
 
     def apply(self, conditioning, vae, latent, context_length,
               audio_context_length=24, context_frames=None,
-              context_latent=None, audio_vae=None, context_audio=None):
+              context_latent=None, audio_vae=None, context_audio=None,
+              endless_continuation=False):
         encode_mode, anchor_mode = ENCODE_MODE, ANCHOR_MODE
         audio_mode, crop = AUDIO_MODE, CROP
         context_length = int(context_length)
@@ -619,6 +620,25 @@ class AutoChainMotionContextCore:
         if audio_ref is not None:
             out = node_helpers.conditioning_set_values(
                 out, {"minimax_refs": [audio_ref]}, append=True)
+
+        if endless_continuation and context_latent is not None:
+            reference_video = _video_from_latent(context_latent)
+            reference_video = reference_video[:, :, -len(blocks):].clone()
+            continuation_ref = {
+                "kind": "video_audio",
+                "latent_t": int(reference_video.shape[2]),
+                "latent_h": int(reference_video.shape[3]),
+                "latent_w": int(reference_video.shape[4]),
+                "ref_audio_t": int(ref_audio_t),
+                "latent": reference_video,
+                "audio_latent": audio_latent,
+            }
+            out = node_helpers.conditioning_set_values(
+                out, {"minimax_refs": [continuation_ref]}, append=True)
+            _LOG.info(
+                "h3_motion_context: Endless continuation enabled; appended "
+                "%d video latent steps and %d audio latent steps",
+                int(reference_video.shape[2]), int(ref_audio_t))
 
         trim = span if anchor_mode == "head" else 0
         _LOG.info("h3_motion_context: video from %s, %s/%s, %d frames -> %d "
