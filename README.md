@@ -1,4 +1,4 @@
-# ComfyUI MiniMax H3 Motion Context Auto-Chain Addon
+# ComfyUI MiniMax H3 Motion Context Auto-Chain Addon ( Audio and Video reference auto chain) 
 
 Automatic long-form video continuation for [ComfyUI](https://github.com/comfyanonymous/ComfyUI) and MiniMax H3 video workflows.
 
