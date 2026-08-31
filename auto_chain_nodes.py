@@ -155,8 +155,7 @@ class MiniMaxH3AutoChainLoadLatent:
 
     def load(self, chain_config):
         clip_index = chain_config["load_clip_index"]
-        reset = chain_config["reset"]
-        if reset or int(clip_index) == 0:
+        if int(clip_index) == 0:
             return (None,)
         try:
             path = _chain_latent_path(chain_config, clip_index)
@@ -524,8 +523,16 @@ def _stitch_videos(paths, frame_counts, total_frames, source_audio,
     else:
         audio_inputs = []
         for index, path in enumerate(paths):
-            filters.append("[%d:a:0]asetpts=PTS-STARTPTS[a%d]" %
-                           (index, index))
+            frames = frame_counts[index]
+            if frames is None:
+                filters.append("[%d:a:0]asetpts=PTS-STARTPTS[a%d]" %
+                               (index, index))
+            else:
+                duration = int(frames) / float(fps)
+                filters.append(
+                    "[%d:a:0]atrim=start=0,apad,atrim=duration=%.9f,"
+                    "asetpts=PTS-STARTPTS[a%d]" %
+                    (index, duration, index))
             audio_inputs.append("[a%d]" % index)
         filters.append("%sconcat=n=%d:v=0:a=1[a]" %
                        ("".join(audio_inputs), len(paths)))
@@ -1527,10 +1534,10 @@ class MiniMaxH3AutoChain:
         if save_partial:
             partial_path = _output_path(output_prefix, "-partial.mp4")
             if replace_composite:
-                for combined_path in (partial_path,
+                for existing_path in (partial_path,
                                       _output_path(output_prefix, "-final.mp4")):
-                    if os.path.isfile(combined_path):
-                        os.remove(combined_path)
+                    if os.path.isfile(existing_path):
+                        os.remove(existing_path)
             paths, frame_counts, clip_indices = _available_chain_clips(
                 chain_config["run_name"], state["total_frames"],
                 state["chunk_frames"])
@@ -1544,6 +1551,11 @@ class MiniMaxH3AutoChain:
                 combined_path = partial_path
                 _LOG.info("h3_motion_context: saved partial stitch through clip %d",
                           clip)
+            else:
+                raise RuntimeError(
+                    "h3_motion_context: partial stitch stopped because the "
+                    "saved clips have different dimensions. Start a new "
+                    "chain ID after changing resolution.")
         if not finished:
             current = _current_graph()
             load_node_id = next((node_id for node_id, node in current.items()
@@ -1560,10 +1572,10 @@ class MiniMaxH3AutoChain:
         elif save_final:
             final_path = _output_path(output_prefix, "-final.mp4")
             if replace_composite:
-                for combined_path in (final_path,
+                for existing_path in (final_path,
                                       _output_path(output_prefix, "-partial.mp4")):
-                    if os.path.isfile(combined_path):
-                        os.remove(combined_path)
+                    if os.path.isfile(existing_path):
+                        os.remove(existing_path)
             paths, frame_counts, clip_indices = _available_chain_clips(
                 chain_config["run_name"], state["total_frames"],
                 state["chunk_frames"])
@@ -1578,6 +1590,11 @@ class MiniMaxH3AutoChain:
             if _stitch_videos(paths, frame_counts, stitch_frames, stitch_audio,
                               final_path, fps):
                 combined_path = final_path
+            else:
+                raise RuntimeError(
+                    "h3_motion_context: final stitch stopped because the "
+                    "saved clips have different dimensions. Start a new "
+                    "chain ID after changing resolution.")
             if len(paths) < _chain_clip_count(state["total_frames"],
                                               state["chunk_frames"]):
                 _LOG.warning(
