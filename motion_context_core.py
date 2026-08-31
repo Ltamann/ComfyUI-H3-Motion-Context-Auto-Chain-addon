@@ -940,15 +940,9 @@ class MiniMaxH3MotionContextSaveLatent:
 class MiniMaxH3MotionContextLoadLatent:
     """Load a saved H3 AV latent for the context_latent input.
 
-    clip_index means exactly what it says: set it to the clip you want to
-    CONTINUE FROM, and that clip's slot is loaded. Generating clip 2 from
-    clip 1: Load node 1, Save node 2. Re-rolling clip 2 changes nothing --
-    it reloads slot 1 and overwrites slot 2's reject. Accept, then bump
-    both numbers.
-
-    At 0 it loads the newest file in the folder instead. Simple, but NOT
-    retry-safe: a re-roll's newest file is the rejected attempt's own
-    save, so the retry gets conditioned on the audio you just rejected.
+    The chain configuration supplies both the latent folder and the previous
+    clip index. The loader therefore always follows the active chain position
+    and remains retry-safe.
 
     The output is ONLY for the Motion Context node's context_latent input.
     It is not a decodable latent -- do not wire it into VAE decode.
@@ -959,21 +953,7 @@ class MiniMaxH3MotionContextLoadLatent:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "latent_path": ("STRING", {
-                    "default": "h3_context",
-                    "tooltip": "A saved latent file, or a folder (relative "
-                               "paths resolve against the ComfyUI output "
-                               "directory). Pointing at a specific FILE "
-                               "always loads that file, ignoring "
-                               "clip_index."}),
-                "clip_index": ("INT", {
-                    "default": 0, "min": 0, "max": 9999,
-                    "tooltip": "The clip to CONTINUE FROM: that clip's "
-                               "slot is loaded. Generating clip 2 from "
-                               "clip 1: set 1 here and 2 on the Save "
-                               "node. 0 = newest file in the folder "
-                               "(NOT retry-safe: a re-roll loads its own "
-                               "rejected audio)."}),
+                "chain_config": ("H3_CHAIN",),
             },
         }
 
@@ -984,22 +964,22 @@ class MiniMaxH3MotionContextLoadLatent:
                    "for the context_latent input only.")
 
     @classmethod
-    def IS_CHANGED(cls, latent_path, clip_index=0):
-        # the path string stays constant while the file behind it changes
-        # (newest save, or an overwritten slot), so cache on the resolved
-        # file identity instead -- otherwise ComfyUI would happily serve
-        # a stale latent forever
+    def IS_CHANGED(cls, chain_config):
         try:
-            p = _resolve_latent_path(latent_path, clip_index)
+            p = _resolve_latent_path(
+                chain_config["latent_prefix"],
+                int(chain_config["load_clip_index"]))
             return "%s:%d" % (p, os.stat(p).st_mtime_ns)
         except Exception:
             return float("NaN")  # unresolvable: never cache
 
-    def load(self, latent_path, clip_index=0):
+    def load(self, chain_config):
         if _st_load is None:
             raise RuntimeError("h3_motion_context: safetensors is not "
                                "available; cannot load latents.")
-        path = _resolve_latent_path(latent_path, clip_index)
+        path = _resolve_latent_path(
+            chain_config["latent_prefix"],
+            int(chain_config["load_clip_index"]))
         data = _st_load(path)
         if "video" not in data or "audio" not in data:
             raise ValueError(
