@@ -591,18 +591,8 @@ class MiniMaxH3SparseChainStitch:
                 stitch_audio = _audio_for_clips(
                     audio, clip_indices, int(chain_config["chunk_frames"]), fps)
         else:
-            with _LOCK:
-                state = _CHAINS.get(str(chain_id))
-            if state is not None:
-                fps = float(state["fps"])
-                paths, frame_counts, clip_indices = _available_chain_clips(
-                    run_name, int(state["total_frames"]),
-                    int(state["chunk_frames"]))
-                if audio is not None:
-                    stitch_audio = _audio_for_clips(
-                        audio, clip_indices, int(state["chunk_frames"]), fps)
-            elif int(total_frames) > 0:
-                chunk_frames = _h3_chain_chunk_frames(chunk_seconds, fps)
+            chunk_frames = _h3_chain_chunk_frames(chunk_seconds, fps)
+            if int(total_frames) > 0:
                 paths, frame_counts, clip_indices = _available_chain_clips(
                     run_name, int(total_frames), chunk_frames)
                 if audio is not None:
@@ -652,6 +642,20 @@ def _chain_context_enabled(current):
         if (_has_connected_input(node, "context_latent") or
                 _has_connected_input(node, "context_frames")):
             return True
+    return False
+
+
+def _chain_uses_saved_latent_only(current):
+    """Whether Motion Context has no pixel-context fallback wired."""
+    for node in current.values():
+        if node.get("class_type") != "MiniMaxH3AutoChainMotionContext":
+            continue
+        if _has_connected_input(node, "context_frames"):
+            return False
+        source = _source_node(
+            current, node.get("inputs", {}).get("context_latent"))
+        return (source is not None and
+                source.get("class_type") == "MiniMaxH3AutoChainLoadLatent")
     return False
 
 
@@ -889,35 +893,37 @@ def _chain_state(chain_id, audio, ref_video, reference_fps, chunk_seconds,
                             "continuing with sparse-chain mode", previous_clip)
             state = {
                 "clip": first_clip,
-                "end_clip": max(0, int(end_clip)),
-                "total_seconds": total_seconds,
-                "audio_seconds": audio_seconds,
-                "reference_seconds": reference_seconds,
-                "sample_rate": sample_rate,
-                "total_samples": total_samples,
-                "fps": fps,
-                "chunk_frames": chunk_frames,
-                "trim_frames": context_frames,
-                "final_tail_mode": final_tail_mode,
-                "final_tail_frames": max(0, int(final_tail_frames)),
-                "total_frames": total_frames,
                 "videos": existing_videos,
                 "frame_counts": [
                     min(end - start, max(0, total_frames - start))
                     for clip in range(1, first_clip)
                     for start, end in [_chain_frame_range(clip, chunk_frames)]
                 ],
-                "style_prompt": style_prompt,
-                "clip_prompts": clip_prompts,
-                "reset": bool(reset),
                 "reference_frame_path": previous_frame,
             }
             _CHAINS[chain_id] = state
+        state.update({
+            "end_clip": max(0, int(end_clip)),
+            "total_seconds": total_seconds,
+            "audio_seconds": audio_seconds,
+            "reference_seconds": reference_seconds,
+            "sample_rate": sample_rate,
+            "total_samples": total_samples,
+            "fps": fps,
+            "chunk_frames": chunk_frames,
+            "trim_frames": context_frames,
+            "final_tail_mode": final_tail_mode,
+            "final_tail_frames": max(0, int(final_tail_frames)),
+            "total_frames": total_frames,
+            "style_prompt": style_prompt,
+            "clip_prompts": clip_prompts,
+            "reset": bool(reset),
+        })
         return state
 
 
 class MiniMaxH3AutoChainAudio:
-    """Feed one sequential 20-second audio chunk into REF2VA."""
+    """Feed one sequential audio chunk into REF2VA."""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -961,8 +967,8 @@ class MiniMaxH3AutoChainAudio:
                                                        "tail is selected."}),
             "reset": ("BOOLEAN", {
                 "default": True,
-                "tooltip": "Start a new chain and discard the in-memory "
-                           "position. Enable this for a new run or resume."}),
+                "tooltip": "Start a new chain from the node settings. "
+                           "When false, resume using the saved latent."}),
             "style_prompt": ("STRING", {
                 "default": "", "multiline": True,
                 "tooltip": "Shared style, character, lighting, camera, and "
@@ -1017,9 +1023,11 @@ class MiniMaxH3AutoChainAudio:
             state = _CHAINS.get(chain_id)
             if state is None:
                 return 1
-            return (int(state["clip"]), float(chunk_seconds), float(fps),
-                    int(trim_frames), str(final_tail_mode),
-                    int(final_tail_frames), bool(endless_continuation))
+            return (str(chain_id), int(state["clip"]), float(chunk_seconds),
+                    float(fps), int(trim_frames), str(final_tail_mode),
+                    int(final_tail_frames), str(style_prompt),
+                    str(clip_prompts), int(start_clip), int(end_clip),
+                    bool(endless_continuation))
 
     def chunk(self, audio, chain_id, chunk_seconds, fps=DEFAULT_FPS,
               trim_frames=22, final_tail_mode="exact audio duration",
@@ -1057,8 +1065,10 @@ class MiniMaxH3AutoChainAudio:
             if not os.path.isfile(expected_latent):
                 _LOG.warning(
                     "h3_motion_context: clip %d has no previous latent at %s; "
-                    "Motion Context will reject the reserved audio pre-roll",
+                    "bypassing Motion Context for this clip",
                     clip, expected_latent)
+                if _chain_uses_saved_latent_only(current):
+                    context_available = False
         effective_trim = state["trim_frames"] if context_available else 0
         output_tail = 0
         if partial_final and state["final_tail_mode"] == "audio plus tail":
